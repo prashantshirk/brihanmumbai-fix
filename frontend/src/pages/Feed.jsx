@@ -116,10 +116,10 @@ function Feed() {
         
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+          <h1 className="text-4xl font-bold text-black dark:text-white mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
             Community Feed
           </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-300 mb-4">
+          <p className="text-lg text-gray-900 dark:text-gray-100 mb-4">
             See what Mumbaikars are reporting across the city
           </p>
           {total > 0 && (

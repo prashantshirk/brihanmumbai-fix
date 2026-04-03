@@ -334,7 +334,7 @@ WARD_DEPARTMENTS = {
 
 
 # ============================================================================
-# AUTHENTICATION ROUTES
+# AUTHENTICATION ROUTES  
 # ============================================================================
 
 @app.route('/api/auth/register', methods=['POST'])
@@ -1348,8 +1348,15 @@ def get_community_feed():
     try:
         # Verify user token
         result = verify_token(request)
-        if isinstance(result, tuple):
-            return result
+        if isinstance(result, tuple) and len(result) == 2:
+            # Check if this is an error response (Flask response object) or success (strings)
+            if hasattr(result[0], 'status_code'):  # Flask response object
+                return result
+            else:
+                # Success - tuple contains (user_id, role)
+                user_id, role = result
+        else:
+            return error('Authentication failed', 401)
         
         # Get pagination parameters
         page = int(request.args.get('page', 1))
@@ -1361,6 +1368,16 @@ def get_community_feed():
         # Get total count
         total = complaints_collection.count_documents({})
         
+        # If no complaints, return empty feed
+        if total == 0:
+            return success({
+                'posts': [],
+                'total': 0,
+                'page': page,
+                'limit': limit,
+                'has_more': False
+            }, 200)
+        
         # Query complaints with pagination, sorted by newest first
         complaints_cursor = complaints_collection.find({}).sort('created_at', -1).skip(skip).limit(limit)
         
@@ -1369,25 +1386,29 @@ def get_community_feed():
         posts = []
         
         for complaint in complaints_cursor:
-            # Fetch citizen name from users collection
-            user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])}, {'name': 1})
-            citizen_name = user['name'] if user else 'Anonymous'
-            
-            # Build lean post object
-            post = {
-                'id': str(complaint['_id']),
-                'citizen_name': citizen_name,
-                'image_url': complaint.get('image_url', ''),
-                'issue_type': complaint.get('issue_type', ''),
-                'severity': complaint.get('severity', ''),
-                'location': complaint.get('location', ''),
-                'ward_number': complaint.get('ward_number', ''),
-                'latitude': complaint.get('latitude'),
-                'longitude': complaint.get('longitude'),
-                'status': complaint.get('status', 'Submitted'),
-                'created_at': complaint['created_at'].isoformat() if complaint.get('created_at') else None
-            }
-            posts.append(post)
+            try:
+                # Fetch citizen name from users collection
+                user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])}, {'name': 1})
+                citizen_name = user['name'] if user else 'Anonymous'
+                
+                # Build lean post object
+                post = {
+                    'id': str(complaint['_id']),
+                    'citizen_name': citizen_name,
+                    'image_url': complaint.get('image_url', ''),
+                    'issue_type': complaint.get('issue_type', ''),
+                    'severity': complaint.get('severity', ''),
+                    'location': complaint.get('location', ''),
+                    'ward_number': complaint.get('ward_number', ''),
+                    'latitude': complaint.get('latitude'),
+                    'longitude': complaint.get('longitude'),
+                    'status': complaint.get('status', 'Submitted'),
+                    'created_at': complaint['created_at'].isoformat() if complaint.get('created_at') else None
+                }
+                posts.append(post)
+            except Exception as post_error:
+                # Skip individual post errors to avoid breaking the entire feed
+                continue
         
         # Calculate has_more
         has_more = (page * limit) < total
