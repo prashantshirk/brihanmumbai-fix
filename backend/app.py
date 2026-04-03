@@ -37,23 +37,13 @@ app = Flask(__name__)
 # ============================================================================
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
-# Allow multiple frontend origins for production
-allowed_origins = [FRONTEND_URL]
-# Add common production patterns
-if 'vercel.app' in FRONTEND_URL or 'netlify.app' in FRONTEND_URL:
-    # Add both with and without www
-    base_domain = FRONTEND_URL.replace('https://', '').replace('http://', '')
-    allowed_origins.extend([
-        f"https://{base_domain}",
-        f"https://www.{base_domain}",
-        f"http://{base_domain}",  # fallback
-    ])
-
+# Configure CORS properly for production
 CORS(app, 
-     origins=allowed_origins,
+     origins=['https://brihanmumbai-fix.vercel.app', 'http://localhost:5173', FRONTEND_URL],
      supports_credentials=True,
-     allow_headers=['Content-Type', 'Authorization'],
-     methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+     allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+     methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+     expose_headers=['Set-Cookie']
 )
 
 # ============================================================================
@@ -143,12 +133,6 @@ def verify_token(request, required_role=None):
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
             token = auth_header.split(' ')[1]
-            print("Using Authorization header as fallback")
-    
-    # Debug logging
-    print(f"Cookie verification - Token found: {bool(token)}")
-    print(f"Available cookies: {list(request.cookies.keys())}")
-    print(f"Request origin: {request.headers.get('Origin', 'No origin')}")
     
     if not token:
         return error('Authentication required', 401)
@@ -158,8 +142,6 @@ def verify_token(request, required_role=None):
         user_id = payload['user_id']
         role = payload.get('role', 'user')  # Default to 'user' for backward compatibility
         
-        print(f"Token verified - User: {user_id}, Role: {role}")
-        
         # Check required role if specified
         if required_role and role != required_role:
             return error(f'Access denied. {required_role} role required', 403)
@@ -167,10 +149,8 @@ def verify_token(request, required_role=None):
         return user_id, role
         
     except jwt.ExpiredSignatureError:
-        print("Token expired")
         return error('Token has expired', 401)
-    except jwt.InvalidTokenError as e:
-        print(f"Invalid token: {e}")
+    except jwt.InvalidTokenError:
         return error('Invalid token', 401)
 
 
@@ -184,8 +164,11 @@ def verify_admin(request):
     """
     token = request.cookies.get('bmf_admin_token')
     
-    print(f"Admin verification - Token found: {bool(token)}")
-    print(f"Available cookies: {list(request.cookies.keys())}")
+    # Fallback to Authorization header if no cookie
+    if not token:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
     
     if not token:
         return error('Admin authentication required', 401)
@@ -195,8 +178,6 @@ def verify_admin(request):
         user_id = payload['user_id']
         role = payload.get('role', 'user')
         
-        print(f"Admin token verified - User: {user_id}, Role: {role}")
-        
         # Check if role is admin
         if role != 'admin':
             return error('Forbidden: Admin access only', 403)
@@ -204,10 +185,8 @@ def verify_admin(request):
         return user_id
         
     except jwt.ExpiredSignatureError:
-        print("Admin token expired")
         return error('Token has expired', 401)
-    except jwt.InvalidTokenError as e:
-        print(f"Invalid admin token: {e}")
+    except jwt.InvalidTokenError:
         return error('Invalid token', 401)
 
 
@@ -217,20 +196,8 @@ def error(message, code=400):
 
 
 def success(data, code=200):
-    """Return standardized success response"""
+    """Return standardized success response"""  
     return jsonify(data), code
-
-
-# Handle preflight requests for all routes
-@app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add('Access-Control-Allow-Headers', "*")
-        response.headers.add('Access-Control-Allow-Methods', "*")
-        response.headers.add('Access-Control-Allow-Credentials', "true")
-        return response
 
 
 # ============================================================================
@@ -370,17 +337,6 @@ WARD_DEPARTMENTS = {
 # AUTHENTICATION ROUTES
 # ============================================================================
 
-@app.route('/api/test-cookies', methods=['GET'])
-def test_cookies():
-    """Test endpoint to check cookie functionality"""
-    print(f"Test cookies - Available: {list(request.cookies.keys())}")
-    return jsonify({
-        'cookies': dict(request.cookies),
-        'headers': dict(request.headers),
-        'origin': request.headers.get('Origin', 'No origin header')
-    })
-
-
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     """Register a new user"""
@@ -426,7 +382,7 @@ def register():
         # Generate JWT token
         token = generate_token(user_id)
         
-        # Create response with HTTP-only cookie
+        # Create response data
         response_data = {
             'user': {
                 'id': user_id,
@@ -436,10 +392,7 @@ def register():
             'token': token  # Include for debugging
         }
         
-        response = make_response(jsonify({
-            'success': True,
-            'data': response_data
-        }), 201)
+        response = make_response(jsonify(response_data), 201)
         
         # Set secure HTTP-only cookie
         response.set_cookie(
@@ -484,7 +437,7 @@ def login():
         user_id = str(user['_id'])
         token = generate_token(user_id)
         
-        # Create response with HTTP-only cookie
+        # Create response data
         response_data = {
             'user': {
                 'id': user_id,
@@ -494,10 +447,7 @@ def login():
             'token': token  # Include for debugging
         }
         
-        response = make_response(jsonify({
-            'success': True,
-            'data': response_data
-        }), 200)
+        response = make_response(jsonify(response_data), 200)
         
         # Set secure HTTP-only cookie
         response.set_cookie(
@@ -612,7 +562,7 @@ def admin_login():
         admin_id = str(admin['_id'])
         token = generate_token(admin_id, role='admin')
         
-        # Create response with HTTP-only cookie
+        # Create response data
         response_data = {
             'admin': {
                 'id': admin_id,
@@ -622,10 +572,7 @@ def admin_login():
             'token': token  # Include for debugging
         }
         
-        response = make_response(jsonify({
-            'success': True,
-            'data': response_data
-        }), 200)
+        response = make_response(jsonify(response_data), 200)
         
         # Set secure HTTP-only cookie for admin
         response.set_cookie(

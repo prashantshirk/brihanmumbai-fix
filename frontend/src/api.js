@@ -93,8 +93,8 @@ export const authAPI = {
     })
     
     // Temporary fallback: Also store token in localStorage for Authorization header
-    if (response.data.data && response.data.data.token) {
-      localStorage.setItem('bmf_token_fallback', response.data.data.token)
+    if (response.data && response.data.token) {
+      localStorage.setItem('bmf_token_fallback', response.data.token)
     }
     
     return response.data
@@ -272,7 +272,7 @@ export const adminAPI = {
     )
     
     // Save admin info to localStorage (UI state only, not auth token)
-    const { admin, token } = response.data.data
+    const { admin, token } = response.data
     localStorage.setItem('bmf_admin', JSON.stringify(admin))
     
     // Temporary fallback: Also store token for Authorization header

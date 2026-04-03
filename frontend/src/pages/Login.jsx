@@ -32,7 +32,7 @@ function Login() {
       const response = await authAPI.login(formData.email, formData.password)
       
       // Save user to localStorage (UI state only, not auth token)
-      localStorage.setItem('bmf_user', JSON.stringify(response.data.user))
+      localStorage.setItem('bmf_user', JSON.stringify(response.user))
       
       // Navigate to home
       navigate('/')
