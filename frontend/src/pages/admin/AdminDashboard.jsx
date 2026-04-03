@@ -79,12 +79,6 @@ function AdminDashboard() {
     loadData()
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('bmf_admin_token')
-    localStorage.removeItem('bmf_admin')
-    navigate('/admin/login')
-  }
-
   const handleFiltersChange = (newFilters) => {
     setFilters(newFilters)
   }
