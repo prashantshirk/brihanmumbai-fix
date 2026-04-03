@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import AdminProtectedRoute from './components/AdminProtectedRoute'
 import Navbar from './components/Navbar'
@@ -13,9 +13,16 @@ import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminComplaintDetail from './pages/admin/AdminComplaintDetail'
 
 function App() {
+  const location = useLocation()
+  
+  // Hide user navbar on admin routes
+  const isAdminRoute = location.pathname.startsWith('/admin')
+
   return (
     <div className="min-h-screen bg-secondary">
-      <Navbar />
+      {/* Only show user navbar for non-admin routes */}
+      {!isAdminRoute && <Navbar />}
+      
       <Routes>
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
