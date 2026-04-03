@@ -547,6 +547,240 @@ def get_current_admin():
 
 
 # ============================================================================
+# ADMIN COMPLAINT MANAGEMENT ROUTES
+# ============================================================================
+
+@app.route('/api/admin/complaints', methods=['GET'])
+def admin_get_complaints():
+    """Get all complaints with filters and pagination (admin only)"""
+    try:
+        # Verify admin token
+        result = verify_admin(request)
+        if isinstance(result, tuple):
+            return result
+        
+        # Get query parameters
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
+        status = request.args.get('status', '').strip()
+        issue_type = request.args.get('issue_type', '').strip()
+        ward = request.args.get('ward', '').strip()
+        search = request.args.get('search', '').strip()
+        
+        # Build filter dynamically
+        filter_dict = {}
+        if status:
+            filter_dict['status'] = status
+        if issue_type:
+            filter_dict['issue_type'] = issue_type
+        if ward:
+            filter_dict['ward_number'] = ward
+        if search:
+            filter_dict['location'] = {'$regex': search, '$options': 'i'}
+        
+        # Get total count
+        total = complaints_collection.count_documents(filter_dict)
+        
+        # Calculate pagination
+        skip = (page - 1) * limit
+        import math
+        pages = math.ceil(total / limit) if limit > 0 else 0
+        
+        # Query complaints with pagination
+        complaints_cursor = complaints_collection.find(filter_dict).sort('created_at', -1).skip(skip).limit(limit)
+        
+        # Fetch complaints and join user info
+        from bson import ObjectId
+        complaints_list = []
+        for complaint in complaints_cursor:
+            # Fetch user info
+            user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])})
+            
+            # Build complaint dict with user info
+            complaint_dict = {
+                'id': str(complaint['_id']),
+                'user_id': str(complaint['user_id']),
+                'user_name': user['name'] if user else 'Unknown',
+                'user_email': user['email'] if user else 'Unknown',
+                'image_url': complaint.get('image_url', ''),
+                'issue_type': complaint.get('issue_type', ''),
+                'severity': complaint.get('severity', ''),
+                'description': complaint.get('description', ''),
+                'department': complaint.get('department', ''),
+                'location': complaint.get('location', ''),
+                'ward_number': complaint.get('ward_number', ''),
+                'latitude': complaint.get('latitude'),
+                'longitude': complaint.get('longitude'),
+                'complaint_text': complaint.get('complaint_text', ''),
+                'status': complaint.get('status', 'Submitted'),
+                'created_at': complaint['created_at'].isoformat() if complaint.get('created_at') else None,
+                'updated_at': complaint['updated_at'].isoformat() if complaint.get('updated_at') else None
+            }
+            complaints_list.append(complaint_dict)
+        
+        return success({
+            'complaints': complaints_list,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': pages
+        }, 200)
+        
+    except Exception as e:
+        return error(f'Failed to fetch complaints: {str(e)}', 500)
+
+
+@app.route('/api/admin/complaints/<complaint_id>', methods=['GET'])
+def admin_get_complaint(complaint_id):
+    """Get single complaint by ID (admin only)"""
+    try:
+        # Verify admin token
+        result = verify_admin(request)
+        if isinstance(result, tuple):
+            return result
+        
+        # Find complaint
+        from bson import ObjectId
+        try:
+            complaint = complaints_collection.find_one({'_id': ObjectId(complaint_id)})
+        except:
+            return error('Invalid complaint ID format', 400)
+        
+        if not complaint:
+            return error('Complaint not found', 404)
+        
+        # Fetch user info
+        user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])})
+        
+        # Build response with user info
+        complaint_dict = {
+            'id': str(complaint['_id']),
+            'user_id': str(complaint['user_id']),
+            'user_name': user['name'] if user else 'Unknown',
+            'user_email': user['email'] if user else 'Unknown',
+            'image_url': complaint.get('image_url', ''),
+            'issue_type': complaint.get('issue_type', ''),
+            'severity': complaint.get('severity', ''),
+            'description': complaint.get('description', ''),
+            'department': complaint.get('department', ''),
+            'location': complaint.get('location', ''),
+            'ward_number': complaint.get('ward_number', ''),
+            'latitude': complaint.get('latitude'),
+            'longitude': complaint.get('longitude'),
+            'complaint_text': complaint.get('complaint_text', ''),
+            'status': complaint.get('status', 'Submitted'),
+            'created_at': complaint['created_at'].isoformat() if complaint.get('created_at') else None,
+            'updated_at': complaint['updated_at'].isoformat() if complaint.get('updated_at') else None
+        }
+        
+        return success(complaint_dict, 200)
+        
+    except Exception as e:
+        return error(f'Failed to fetch complaint: {str(e)}', 500)
+
+
+@app.route('/api/admin/complaints/<complaint_id>/status', methods=['PATCH'])
+def admin_update_complaint_status(complaint_id):
+    """Update complaint status (admin only)"""
+    try:
+        # Verify admin token
+        result = verify_admin(request)
+        if isinstance(result, tuple):
+            return result
+        
+        # Get status from request body
+        data = request.get_json()
+        new_status = data.get('status', '').strip()
+        
+        # Validate status
+        valid_statuses = ['Submitted', 'In Progress', 'Resolved', 'Rejected']
+        if new_status not in valid_statuses:
+            return error(f'Invalid status. Must be one of: {", ".join(valid_statuses)}', 400)
+        
+        # Update complaint
+        from bson import ObjectId
+        try:
+            updated_at = datetime.utcnow()
+            result = complaints_collection.update_one(
+                {'_id': ObjectId(complaint_id)},
+                {'$set': {
+                    'status': new_status,
+                    'updated_at': updated_at
+                }}
+            )
+        except:
+            return error('Invalid complaint ID format', 400)
+        
+        if result.matched_count == 0:
+            return error('Complaint not found', 404)
+        
+        return success({
+            'success': True,
+            'complaint_id': complaint_id,
+            'new_status': new_status,
+            'updated_at': updated_at.isoformat()
+        }, 200)
+        
+    except Exception as e:
+        return error(f'Failed to update complaint status: {str(e)}', 500)
+
+
+@app.route('/api/admin/stats', methods=['GET'])
+def admin_get_stats():
+    """Get aggregate statistics (admin only)"""
+    try:
+        # Verify admin token
+        result = verify_admin(request)
+        if isinstance(result, tuple):
+            return result
+        
+        # Total complaints
+        total = complaints_collection.count_documents({})
+        
+        # By status
+        submitted = complaints_collection.count_documents({'status': 'Submitted'})
+        in_progress = complaints_collection.count_documents({'status': 'In Progress'})
+        resolved = complaints_collection.count_documents({'status': 'Resolved'})
+        rejected = complaints_collection.count_documents({'status': 'Rejected'})
+        
+        # By issue type
+        issue_types = [
+            'Pothole',
+            'Garbage/Waste',
+            'Water Leakage',
+            'Broken Streetlight',
+            'Damaged Footpath',
+            'Open Drain',
+            'Illegal Construction',
+            'Other'
+        ]
+        by_issue_type = {}
+        for issue_type in issue_types:
+            by_issue_type[issue_type] = complaints_collection.count_documents({'issue_type': issue_type})
+        
+        # By severity
+        by_severity = {
+            'Low': complaints_collection.count_documents({'severity': 'Low'}),
+            'Medium': complaints_collection.count_documents({'severity': 'Medium'}),
+            'High': complaints_collection.count_documents({'severity': 'High'}),
+            'Critical': complaints_collection.count_documents({'severity': 'Critical'})
+        }
+        
+        return success({
+            'total': total,
+            'submitted': submitted,
+            'in_progress': in_progress,
+            'resolved': resolved,
+            'rejected': rejected,
+            'by_issue_type': by_issue_type,
+            'by_severity': by_severity
+        }, 200)
+        
+    except Exception as e:
+        return error(f'Failed to fetch statistics: {str(e)}', 500)
+
+
+# ============================================================================
 # IMAGE ANALYSIS ROUTE
 # ============================================================================
 
