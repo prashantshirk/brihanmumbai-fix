@@ -51,6 +51,7 @@ db = client['brihanmumbai_fix']
 # Collections
 users_collection = db.users
 complaints_collection = db.complaints
+admins_collection = db.admins  # Admin panel collection
 
 # ============================================================================
 # CLOUDINARY CONFIGURATION
@@ -91,10 +92,15 @@ if not JWT_SECRET:
 # HELPER FUNCTIONS
 # ============================================================================
 
-def generate_token(user_id):
-    """Generate JWT token for user authentication (expires in 7 days)"""
+def generate_token(user_id, role='user'):
+    """Generate JWT token for authentication (expires in 7 days)
+    Args:
+        user_id: User or admin ID
+        role: 'user' or 'admin' (default: 'user')
+    """
     payload = {
         'user_id': str(user_id),
+        'role': role,
         'exp': datetime.utcnow() + timedelta(days=7),
         'iat': datetime.utcnow()
     }
@@ -102,8 +108,15 @@ def generate_token(user_id):
     return token
 
 
-def verify_token(request):
-    """Verify JWT token from request headers and return user_id"""
+def verify_token(request, required_role=None):
+    """Verify JWT token from request headers and return user_id and role
+    Args:
+        request: Flask request object
+        required_role: Optional role to check ('user', 'admin')
+    Returns:
+        tuple: (user_id, role) if successful
+        Flask response: error response if failed
+    """
     auth_header = request.headers.get('Authorization')
     
     if not auth_header:
@@ -113,7 +126,49 @@ def verify_token(request):
         # Expected format: "Bearer <token>"
         token = auth_header.split(' ')[1]
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        return payload['user_id']
+        user_id = payload['user_id']
+        role = payload.get('role', 'user')  # Default to 'user' for backward compatibility
+        
+        # Check required role if specified
+        if required_role and role != required_role:
+            return error(f'Access denied. {required_role} role required', 403)
+        
+        return user_id, role
+        
+    except jwt.ExpiredSignatureError:
+        return error('Token has expired', 401)
+    except jwt.InvalidTokenError:
+        return error('Invalid token', 401)
+    except IndexError:
+        return error('Invalid authorization header format', 401)
+
+
+def verify_admin(request):
+    """Verify admin JWT token from request headers and return admin_id
+    Args:
+        request: Flask request object
+    Returns:
+        str: admin_id if successful
+        Flask response: error response if failed (401 unauthorized, 403 forbidden)
+    """
+    auth_header = request.headers.get('Authorization')
+    
+    if not auth_header:
+        return error('Authorization header is missing', 401)
+    
+    try:
+        # Expected format: "Bearer <token>"
+        token = auth_header.split(' ')[1]
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        user_id = payload['user_id']
+        role = payload.get('role', 'user')
+        
+        # Check if role is admin
+        if role != 'admin':
+            return error('Forbidden: Admin access only', 403)
+        
+        return user_id
+        
     except jwt.ExpiredSignatureError:
         return error('Token has expired', 401)
     except jwt.InvalidTokenError:
@@ -408,6 +463,87 @@ def get_current_user():
         
     except Exception as e:
         return error(f'Failed to fetch user: {str(e)}', 500)
+
+
+# ============================================================================
+# ADMIN AUTHENTICATION ROUTES
+# ============================================================================
+
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    """Admin login (searches users collection with role='admin')"""
+    try:
+        data = request.get_json()
+        
+        # Extract fields
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+        
+        # Validate input
+        if not email or not password:
+            return error('Email and password are required', 400)
+        
+        # Find admin by email AND role='admin' in users collection
+        admin = users_collection.find_one({
+            'email': email.lower(),
+            'role': 'admin'
+        })
+        
+        if not admin:
+            return error('Invalid admin credentials', 401)
+        
+        # Verify password
+        if not bcrypt.checkpw(password.encode('utf-8'), admin['password_hash']):
+            return error('Invalid admin credentials', 401)
+        
+        # Generate JWT token with role='admin'
+        admin_id = str(admin['_id'])
+        token = generate_token(admin_id, role='admin')
+        
+        # Return success response
+        return success({
+            'token': token,
+            'admin': {
+                'id': admin_id,
+                'name': admin['name'],
+                'email': admin['email']
+            }
+        }, 200)
+        
+    except Exception as e:
+        return error(f'Admin login failed: {str(e)}', 500)
+
+
+@app.route('/api/admin/me', methods=['GET'])
+def get_current_admin():
+    """Get current authenticated admin's information"""
+    try:
+        # Verify admin token
+        result = verify_admin(request)
+        
+        # If result is error response tuple, return it
+        if isinstance(result, tuple):
+            return result
+        
+        admin_id = result
+        
+        # Fetch admin from database
+        from bson import ObjectId
+        admin = users_collection.find_one({'_id': ObjectId(admin_id)})
+        
+        if not admin:
+            return error('Admin not found', 404)
+        
+        # Return admin information
+        return success({
+            'id': str(admin['_id']),
+            'name': admin['name'],
+            'email': admin['email'],
+            'role': 'admin'
+        }, 200)
+        
+    except Exception as e:
+        return error(f'Failed to fetch admin: {str(e)}', 500)
 
 
 # ============================================================================
