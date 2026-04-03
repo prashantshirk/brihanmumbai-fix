@@ -17,8 +17,9 @@ function Navbar() {
       // Call API to clear cookie
       await authAPI.logout()
       
-      // Clear UI state
+      // Clear UI state and fallback token
       localStorage.removeItem('bmf_user')
+      localStorage.removeItem('bmf_token_fallback')
       
       // Close mobile menu if open
       setMobileMenuOpen(false)
@@ -29,6 +30,7 @@ function Navbar() {
       console.error('Logout failed:', error)
       // Force logout anyway by clearing local state and redirecting
       localStorage.removeItem('bmf_user')
+      localStorage.removeItem('bmf_token_fallback')
       navigate('/login')
     }
   }

@@ -144,8 +144,9 @@ function AdminDashboard() {
       // Call API to clear admin cookie
       await adminAPI.logout()
       
-      // Clear admin UI state
+      // Clear admin UI state and fallback token
       localStorage.removeItem('bmf_admin')
+      localStorage.removeItem('bmf_admin_token_fallback')
       
       // Navigate to admin login
       navigate('/admin/login')
@@ -153,6 +154,7 @@ function AdminDashboard() {
       console.error('Admin logout failed:', error)
       // Force logout anyway by clearing local state and redirecting
       localStorage.removeItem('bmf_admin')
+      localStorage.removeItem('bmf_admin_token_fallback')
       navigate('/admin/login')
     }
   }

@@ -13,10 +13,22 @@ const api = axios.create({
 })
 
 // ============================================================================
-// REQUEST INTERCEPTOR - No auth headers needed (cookies handle this)
+// REQUEST INTERCEPTOR - Fallback Authorization header for debugging
 // ============================================================================
 
-// No request interceptor needed - cookies are sent automatically
+api.interceptors.request.use(
+  (config) => {
+    // Fallback: send token in Authorization header if we have it
+    const fallbackToken = localStorage.getItem('bmf_token_fallback')
+    if (fallbackToken && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${fallbackToken}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
 
 // ============================================================================
 // RESPONSE INTERCEPTOR - Handle 401 Errors
@@ -27,12 +39,21 @@ api.interceptors.response.use(
     return response
   },
   (error) => {
+    // Only redirect on 401 if it's not an initial auth attempt
     if (error.response && error.response.status === 401) {
-      // Clear user data from localStorage (for UI state only)
-      localStorage.removeItem('bmf_user')
+      // Don't redirect if this is a login attempt
+      const isAuthAttempt = error.config?.url?.includes('/auth/login') || 
+                           error.config?.url?.includes('/auth/register')
       
-      // Redirect to login (cookie cleared by server)
-      window.location.href = '/login'
+      if (!isAuthAttempt) {
+        // Clear user data from localStorage (for UI state only)
+        localStorage.removeItem('bmf_user')
+        
+        // Only redirect if not already on login page
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login'
+        }
+      }
     }
     return Promise.reject(error)
   }
@@ -70,6 +91,12 @@ export const authAPI = {
       email,
       password
     })
+    
+    // Temporary fallback: Also store token in localStorage for Authorization header
+    if (response.data.data && response.data.data.token) {
+      localStorage.setItem('bmf_token_fallback', response.data.data.token)
+    }
+    
     return response.data
   },
 
@@ -88,6 +115,8 @@ export const authAPI = {
    */
   logout: async () => {
     const response = await api.post('/api/auth/logout')
+    // Clear fallback token
+    localStorage.removeItem('bmf_token_fallback')
     return response.data
   }
 }
@@ -189,6 +218,21 @@ const adminApi = axios.create({
   withCredentials: true  // Include cookies in requests
 })
 
+// Admin request interceptor - Fallback Authorization header
+adminApi.interceptors.request.use(
+  (config) => {
+    // Fallback: send token in Authorization header if we have it
+    const fallbackToken = localStorage.getItem('bmf_admin_token_fallback')
+    if (fallbackToken && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${fallbackToken}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
 // Admin response interceptor - Handle 401/403 errors
 adminApi.interceptors.response.use(
   (response) => {
@@ -196,11 +240,18 @@ adminApi.interceptors.response.use(
   },
   (error) => {
     if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-      // Clear admin data from localStorage (for UI state only)
-      localStorage.removeItem('bmf_admin')
+      // Don't redirect if this is an admin login attempt
+      const isAuthAttempt = error.config?.url?.includes('/admin/login')
       
-      // Redirect to admin login (cookie cleared by server)
-      window.location.href = '/admin/login'
+      if (!isAuthAttempt) {
+        // Clear admin data from localStorage (for UI state only)
+        localStorage.removeItem('bmf_admin')
+        
+        // Only redirect if not already on admin login page
+        if (window.location.pathname !== '/admin/login') {
+          window.location.href = '/admin/login'
+        }
+      }
     }
     return Promise.reject(error)
   }
@@ -221,8 +272,13 @@ export const adminAPI = {
     )
     
     // Save admin info to localStorage (UI state only, not auth token)
-    const { admin } = response.data.data
+    const { admin, token } = response.data.data
     localStorage.setItem('bmf_admin', JSON.stringify(admin))
+    
+    // Temporary fallback: Also store token for Authorization header
+    if (token) {
+      localStorage.setItem('bmf_admin_token_fallback', token)
+    }
     
     return response.data
   },
@@ -233,6 +289,8 @@ export const adminAPI = {
    */
   logout: async () => {
     const response = await adminApi.post('/api/admin/logout')
+    // Clear fallback token
+    localStorage.removeItem('bmf_admin_token_fallback')
     return response.data
   },
 
