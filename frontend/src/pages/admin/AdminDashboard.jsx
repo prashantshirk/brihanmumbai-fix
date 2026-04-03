@@ -145,6 +145,24 @@ function AdminDashboard() {
     })
   }
 
+  const handleLogout = async () => {
+    try {
+      // Call API to clear admin cookie
+      await adminAPI.logout()
+      
+      // Clear admin UI state
+      localStorage.removeItem('bmf_admin')
+      
+      // Navigate to admin login
+      navigate('/admin/login')
+    } catch (error) {
+      console.error('Admin logout failed:', error)
+      // Force logout anyway by clearing local state and redirecting
+      localStorage.removeItem('bmf_admin')
+      navigate('/admin/login')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Admin Navbar */}

@@ -2,30 +2,24 @@ import { Navigate } from 'react-router-dom'
 
 /**
  * AdminProtectedRoute - Route guard for admin-only pages
- * Checks for valid admin token and role in localStorage
+ * Checks for valid admin data in localStorage (server verifies cookie)
  */
 function AdminProtectedRoute({ children }) {
-  const token = localStorage.getItem('bmf_admin_token')
+  // Since we can't access HTTP-only cookies in JS, we check for admin data
+  // The server will verify the actual auth cookie
   const adminData = localStorage.getItem('bmf_admin')
   
-  // Check if token exists
-  if (!token) {
-    return <Navigate to="/admin/login" replace />
-  }
-  
-  // Check if admin data exists and has admin role
+  // Check if admin data exists
   if (adminData) {
     try {
       const admin = JSON.parse(adminData)
-      if (admin.role !== 'admin' && !admin.id) {
+      if (!admin.id) {
         // Invalid admin data
-        localStorage.removeItem('bmf_admin_token')
         localStorage.removeItem('bmf_admin')
         return <Navigate to="/admin/login" replace />
       }
     } catch (e) {
       // Invalid JSON
-      localStorage.removeItem('bmf_admin_token')
       localStorage.removeItem('bmf_admin')
       return <Navigate to="/admin/login" replace />
     }

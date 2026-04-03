@@ -81,9 +81,8 @@ function Register() {
         formData.password
       )
       
-      // Save token and user to localStorage
-      localStorage.setItem('bmf_token', response.token)
-      localStorage.setItem('bmf_user', JSON.stringify(response.user))
+      // Save user to localStorage (UI state only, not auth token)
+      localStorage.setItem('bmf_user', JSON.stringify(response.data.user))
       
       // Navigate to home
       navigate('/')

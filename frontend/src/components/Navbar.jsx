@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Menu, X, LogOut, Home, FileText } from 'lucide-react'
+import { Menu, X, LogOut, Home, FileText, Users } from 'lucide-react'
+import { authAPI } from '../api'
 
 function Navbar() {
   const navigate = useNavigate()
@@ -11,16 +12,25 @@ function Navbar() {
   const userString = localStorage.getItem('bmf_user')
   const user = userString ? JSON.parse(userString) : null
 
-  const handleLogout = () => {
-    // Clear authentication data
-    localStorage.removeItem('bmf_token')
-    localStorage.removeItem('bmf_user')
-    
-    // Close mobile menu if open
-    setMobileMenuOpen(false)
-    
-    // Navigate to login
-    navigate('/login')
+  const handleLogout = async () => {
+    try {
+      // Call API to clear cookie
+      await authAPI.logout()
+      
+      // Clear UI state
+      localStorage.removeItem('bmf_user')
+      
+      // Close mobile menu if open
+      setMobileMenuOpen(false)
+      
+      // Navigate to login
+      navigate('/login')
+    } catch (error) {
+      console.error('Logout failed:', error)
+      // Force logout anyway by clearing local state and redirecting
+      localStorage.removeItem('bmf_user')
+      navigate('/login')
+    }
   }
 
   const closeMobileMenu = () => {
@@ -67,6 +77,22 @@ function Navbar() {
               <Home size={18} />
               <span>Submit Complaint</span>
               {isActive('/') && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></span>
+              )}
+            </Link>
+
+            {/* Community Feed Link */}
+            <Link
+              to="/feed"
+              className={`flex items-center space-x-2 px-3 py-2 text-sm font-medium transition-colors relative ${
+                isActive('/feed')
+                  ? 'text-primary'
+                  : 'text-gray-700 hover:text-primary'
+              }`}
+            >
+              <Users size={14} />
+              <span>Community Feed</span>
+              {isActive('/feed') && (
                 <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"></span>
               )}
             </Link>
@@ -135,6 +161,20 @@ function Navbar() {
             >
               <Home size={20} />
               <span>Submit Complaint</span>
+            </Link>
+
+            {/* Community Feed Link */}
+            <Link
+              to="/feed"
+              onClick={closeMobileMenu}
+              className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors ${
+                isActive('/feed')
+                  ? 'bg-red-50 text-primary font-medium'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Users size={20} />
+              <span>Community Feed</span>
             </Link>
 
             {/* Dashboard Link */}

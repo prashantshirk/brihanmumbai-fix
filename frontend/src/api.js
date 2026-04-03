@@ -8,25 +8,15 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
   headers: {
     'Content-Type': 'application/json'
-  }
+  },
+  withCredentials: true  // Include cookies in requests
 })
 
 // ============================================================================
-// REQUEST INTERCEPTOR - Attach Auth Token
+// REQUEST INTERCEPTOR - No auth headers needed (cookies handle this)
 // ============================================================================
 
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('bmf_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
+// No request interceptor needed - cookies are sent automatically
 
 // ============================================================================
 // RESPONSE INTERCEPTOR - Handle 401 Errors
@@ -38,11 +28,10 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response && error.response.status === 401) {
-      // Clear authentication data
-      localStorage.removeItem('bmf_token')
+      // Clear user data from localStorage (for UI state only)
       localStorage.removeItem('bmf_user')
       
-      // Redirect to login
+      // Redirect to login (cookie cleared by server)
       window.location.href = '/login'
     }
     return Promise.reject(error)
@@ -59,7 +48,7 @@ export const authAPI = {
    * @param {string} name - User's full name
    * @param {string} email - User's email
    * @param {string} password - User's password
-   * @returns {Promise} - { token, user }
+   * @returns {Promise} - { user }
    */
   register: async (name, email, password) => {
     const response = await api.post('/api/auth/register', {
@@ -74,7 +63,7 @@ export const authAPI = {
    * Login existing user
    * @param {string} email - User's email
    * @param {string} password - User's password
-   * @returns {Promise} - { token, user }
+   * @returns {Promise} - { user }
    */
   login: async (email, password) => {
     const response = await api.post('/api/auth/login', {
@@ -90,6 +79,15 @@ export const authAPI = {
    */
   me: async () => {
     const response = await api.get('/api/auth/me')
+    return response.data
+  },
+
+  /**
+   * Logout user (clear cookie)
+   * @returns {Promise} - { success, message }
+   */
+  logout: async () => {
+    const response = await api.post('/api/auth/logout')
     return response.data
   }
 }
@@ -187,22 +185,9 @@ const adminApi = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
   headers: {
     'Content-Type': 'application/json'
-  }
-})
-
-// Admin request interceptor - Attach admin token
-adminApi.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('bmf_admin_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
+  withCredentials: true  // Include cookies in requests
+})
 
 // Admin response interceptor - Handle 401/403 errors
 adminApi.interceptors.response.use(
@@ -211,11 +196,10 @@ adminApi.interceptors.response.use(
   },
   (error) => {
     if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-      // Clear admin authentication data
-      localStorage.removeItem('bmf_admin_token')
+      // Clear admin data from localStorage (for UI state only)
       localStorage.removeItem('bmf_admin')
       
-      // Redirect to admin login
+      // Redirect to admin login (cookie cleared by server)
       window.location.href = '/admin/login'
     }
     return Promise.reject(error)
@@ -227,19 +211,28 @@ export const adminAPI = {
    * Admin login
    * @param {string} email - Admin email
    * @param {string} password - Admin password
-   * @returns {Promise} - { token, admin }
+   * @returns {Promise} - { admin }
    */
   login: async (email, password) => {
     const response = await axios.post(
       `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/admin/login`,
-      { email, password }
+      { email, password },
+      { withCredentials: true }  // Include cookies
     )
     
-    // Save admin token and info to localStorage
-    const { token, admin } = response.data
-    localStorage.setItem('bmf_admin_token', token)
+    // Save admin info to localStorage (UI state only, not auth token)
+    const { admin } = response.data.data
     localStorage.setItem('bmf_admin', JSON.stringify(admin))
     
+    return response.data
+  },
+
+  /**
+   * Admin logout
+   * @returns {Promise} - { success, message }
+   */
+  logout: async () => {
+    const response = await adminApi.post('/api/admin/logout')
     return response.data
   },
 
@@ -302,6 +295,25 @@ export const adminAPI = {
    */
   getStats: async () => {
     const response = await adminApi.get('/api/admin/stats')
+    return response.data
+  }
+}
+
+// ============================================================================
+// COMMUNITY FEED API
+// ============================================================================
+
+export const feedAPI = {
+  /**
+   * Get community feed posts (paginated)
+   * @param {number} page - Page number (default: 1)
+   * @param {number} limit - Posts per page (default: 12)
+   * @returns {Promise} - { posts, total, page, limit, has_more }
+   */
+  getPosts: async (page = 1, limit = 12) => {
+    const response = await api.get('/api/feed', {
+      params: { page, limit }
+    })
     return response.data
   }
 }

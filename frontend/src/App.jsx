@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Home from './pages/Home'
 import Dashboard from './pages/Dashboard'
+import Feed from './pages/Feed'
 
 // Admin Pages
 import AdminLogin from './pages/admin/AdminLogin'
@@ -37,6 +38,11 @@ function App() {
         <Route path="/dashboard" element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/feed" element={
+          <ProtectedRoute>
+            <Feed />
           </ProtectedRoute>
         } />
         

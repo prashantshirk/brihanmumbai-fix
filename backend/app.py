@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -109,7 +109,7 @@ def generate_token(user_id, role='user'):
 
 
 def verify_token(request, required_role=None):
-    """Verify JWT token from request headers and return user_id and role
+    """Verify JWT token from request cookies and return user_id and role
     Args:
         request: Flask request object
         required_role: Optional role to check ('user', 'admin')
@@ -117,14 +117,13 @@ def verify_token(request, required_role=None):
         tuple: (user_id, role) if successful
         Flask response: error response if failed
     """
-    auth_header = request.headers.get('Authorization')
+    # Try both user and admin cookies
+    token = request.cookies.get('bmf_token') or request.cookies.get('bmf_admin_token')
     
-    if not auth_header:
-        return error('Authorization header is missing', 401)
+    if not token:
+        return error('Authentication required', 401)
     
     try:
-        # Expected format: "Bearer <token>"
-        token = auth_header.split(' ')[1]
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
         user_id = payload['user_id']
         role = payload.get('role', 'user')  # Default to 'user' for backward compatibility
@@ -139,26 +138,22 @@ def verify_token(request, required_role=None):
         return error('Token has expired', 401)
     except jwt.InvalidTokenError:
         return error('Invalid token', 401)
-    except IndexError:
-        return error('Invalid authorization header format', 401)
 
 
 def verify_admin(request):
-    """Verify admin JWT token from request headers and return admin_id
+    """Verify admin JWT token from request cookies and return admin_id
     Args:
         request: Flask request object
     Returns:
         str: admin_id if successful
         Flask response: error response if failed (401 unauthorized, 403 forbidden)
     """
-    auth_header = request.headers.get('Authorization')
+    token = request.cookies.get('bmf_admin_token')
     
-    if not auth_header:
-        return error('Authorization header is missing', 401)
+    if not token:
+        return error('Admin authentication required', 401)
     
     try:
-        # Expected format: "Bearer <token>"
-        token = auth_header.split(' ')[1]
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
         user_id = payload['user_id']
         role = payload.get('role', 'user')
@@ -173,8 +168,6 @@ def verify_admin(request):
         return error('Token has expired', 401)
     except jwt.InvalidTokenError:
         return error('Invalid token', 401)
-    except IndexError:
-        return error('Invalid authorization header format', 401)
 
 
 def error(message, code=400):
@@ -369,15 +362,31 @@ def register():
         # Generate JWT token
         token = generate_token(user_id)
         
-        # Return success response
-        return success({
-            'token': token,
+        # Create response with HTTP-only cookie
+        response_data = {
             'user': {
                 'id': user_id,
                 'name': name,
                 'email': email.lower()
             }
-        }, 201)
+        }
+        
+        response = make_response(jsonify({
+            'success': True,
+            'data': response_data
+        }), 201)
+        
+        # Set secure HTTP-only cookie
+        response.set_cookie(
+            'bmf_token',
+            token,
+            max_age=7*24*60*60,  # 7 days in seconds
+            httponly=True,
+            secure=os.getenv('FLASK_ENV') == 'production',  # Only HTTPS in production
+            samesite='Lax'
+        )
+        
+        return response
         
     except Exception as e:
         return error(f'Registration failed: {str(e)}', 500)
@@ -410,15 +419,31 @@ def login():
         user_id = str(user['_id'])
         token = generate_token(user_id)
         
-        # Return success response
-        return success({
-            'token': token,
+        # Create response with HTTP-only cookie
+        response_data = {
             'user': {
                 'id': user_id,
                 'name': user['name'],
                 'email': user['email']
             }
-        }, 200)
+        }
+        
+        response = make_response(jsonify({
+            'success': True,
+            'data': response_data
+        }), 200)
+        
+        # Set secure HTTP-only cookie
+        response.set_cookie(
+            'bmf_token',
+            token,
+            max_age=7*24*60*60,  # 7 days in seconds
+            httponly=True,
+            secure=os.getenv('FLASK_ENV') == 'production',  # Only HTTPS in production
+            samesite='Lax'
+        )
+        
+        return response
         
     except Exception as e:
         return error(f'Login failed: {str(e)}', 500)
@@ -465,6 +490,27 @@ def get_current_user():
         return error(f'Failed to fetch user: {str(e)}', 500)
 
 
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """Logout user by clearing cookie"""
+    response = make_response(jsonify({
+        'success': True,
+        'message': 'Logged out successfully'
+    }), 200)
+    
+    # Clear the authentication cookie
+    response.set_cookie(
+        'bmf_token',
+        '',
+        max_age=0,
+        httponly=True,
+        secure=os.getenv('FLASK_ENV') == 'production',
+        samesite='Lax'
+    )
+    
+    return response
+
+
 # ============================================================================
 # ADMIN AUTHENTICATION ROUTES
 # ============================================================================
@@ -500,15 +546,31 @@ def admin_login():
         admin_id = str(admin['_id'])
         token = generate_token(admin_id, role='admin')
         
-        # Return success response
-        return success({
-            'token': token,
+        # Create response with HTTP-only cookie
+        response_data = {
             'admin': {
                 'id': admin_id,
                 'name': admin['name'],
                 'email': admin['email']
             }
-        }, 200)
+        }
+        
+        response = make_response(jsonify({
+            'success': True,
+            'data': response_data
+        }), 200)
+        
+        # Set secure HTTP-only cookie for admin
+        response.set_cookie(
+            'bmf_admin_token',
+            token,
+            max_age=7*24*60*60,  # 7 days in seconds
+            httponly=True,
+            secure=os.getenv('FLASK_ENV') == 'production',  # Only HTTPS in production
+            samesite='Lax'
+        )
+        
+        return response
         
     except Exception as e:
         return error(f'Admin login failed: {str(e)}', 500)
@@ -544,6 +606,27 @@ def get_current_admin():
         
     except Exception as e:
         return error(f'Failed to fetch admin: {str(e)}', 500)
+
+
+@app.route('/api/admin/logout', methods=['POST'])
+def admin_logout():
+    """Logout admin by clearing cookie"""
+    response = make_response(jsonify({
+        'success': True,
+        'message': 'Admin logged out successfully'
+    }), 200)
+    
+    # Clear the admin authentication cookie
+    response.set_cookie(
+        'bmf_admin_token',
+        '',
+        max_age=0,
+        httponly=True,
+        secure=os.getenv('FLASK_ENV') == 'production',
+        samesite='Lax'
+    )
+    
+    return response
 
 
 # ============================================================================
@@ -1239,6 +1322,72 @@ def update_complaint_status(complaint_id):
         
     except Exception as e:
         return error(f'Failed to update complaint: {str(e)}', 500)
+
+
+# ============================================================================
+# COMMUNITY FEED ROUTE
+# ============================================================================
+
+@app.route('/api/feed', methods=['GET'])
+def get_community_feed():
+    """Get community feed of all complaints (paginated)"""
+    try:
+        # Verify user token
+        result = verify_token(request)
+        if isinstance(result, tuple):
+            return result
+        
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 12))
+        
+        # Calculate pagination
+        skip = (page - 1) * limit
+        
+        # Get total count
+        total = complaints_collection.count_documents({})
+        
+        # Query complaints with pagination, sorted by newest first
+        complaints_cursor = complaints_collection.find({}).sort('created_at', -1).skip(skip).limit(limit)
+        
+        # Build feed posts with user names
+        from bson import ObjectId
+        posts = []
+        
+        for complaint in complaints_cursor:
+            # Fetch citizen name from users collection
+            user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])}, {'name': 1})
+            citizen_name = user['name'] if user else 'Anonymous'
+            
+            # Build lean post object
+            post = {
+                'id': str(complaint['_id']),
+                'citizen_name': citizen_name,
+                'image_url': complaint.get('image_url', ''),
+                'issue_type': complaint.get('issue_type', ''),
+                'severity': complaint.get('severity', ''),
+                'location': complaint.get('location', ''),
+                'ward_number': complaint.get('ward_number', ''),
+                'latitude': complaint.get('latitude'),
+                'longitude': complaint.get('longitude'),
+                'status': complaint.get('status', 'Submitted'),
+                'created_at': complaint['created_at'].isoformat() if complaint.get('created_at') else None
+            }
+            posts.append(post)
+        
+        # Calculate has_more
+        has_more = (page * limit) < total
+        
+        return success({
+            'posts': posts,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'has_more': has_more
+        }, 200)
+        
+    except Exception as e:
+        return error(f'Failed to fetch community feed: {str(e)}', 500)
 
 
 # ============================================================================
