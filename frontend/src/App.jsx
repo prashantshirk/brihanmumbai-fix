@@ -1,10 +1,16 @@
 import { Routes, Route } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
+import AdminProtectedRoute from './components/AdminProtectedRoute'
 import Navbar from './components/Navbar'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Home from './pages/Home'
 import Dashboard from './pages/Dashboard'
+
+// Admin Pages
+import AdminLogin from './pages/admin/AdminLogin'
+import AdminDashboard from './pages/admin/AdminDashboard'
+import AdminComplaintDetail from './pages/admin/AdminComplaintDetail'
 
 function App() {
   return (
@@ -15,7 +21,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         
-        {/* Protected Routes */}
+        {/* Protected User Routes */}
         <Route path="/" element={
           <ProtectedRoute>
             <Home />
@@ -25,6 +31,19 @@ function App() {
           <ProtectedRoute>
             <Dashboard />
           </ProtectedRoute>
+        } />
+        
+        {/* Admin Routes */}
+        <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin" element={
+          <AdminProtectedRoute>
+            <AdminDashboard />
+          </AdminProtectedRoute>
+        } />
+        <Route path="/admin/complaints/:id" element={
+          <AdminProtectedRoute>
+            <AdminComplaintDetail />
+          </AdminProtectedRoute>
         } />
       </Routes>
     </div>

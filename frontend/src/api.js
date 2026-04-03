@@ -178,5 +178,133 @@ export const wardAPI = {
   }
 }
 
+// ============================================================================
+// ADMIN API (Separate Auth System)
+// ============================================================================
+
+// Create separate axios instance for admin routes
+const adminApi = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+// Admin request interceptor - Attach admin token
+adminApi.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('bmf_admin_token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
+// Admin response interceptor - Handle 401/403 errors
+adminApi.interceptors.response.use(
+  (response) => {
+    return response
+  },
+  (error) => {
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      // Clear admin authentication data
+      localStorage.removeItem('bmf_admin_token')
+      localStorage.removeItem('bmf_admin')
+      
+      // Redirect to admin login
+      window.location.href = '/admin/login'
+    }
+    return Promise.reject(error)
+  }
+)
+
+export const adminAPI = {
+  /**
+   * Admin login
+   * @param {string} email - Admin email
+   * @param {string} password - Admin password
+   * @returns {Promise} - { token, admin }
+   */
+  login: async (email, password) => {
+    const response = await axios.post(
+      `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/admin/login`,
+      { email, password }
+    )
+    
+    // Save admin token and info to localStorage
+    const { token, admin } = response.data
+    localStorage.setItem('bmf_admin_token', token)
+    localStorage.setItem('bmf_admin', JSON.stringify(admin))
+    
+    return response.data
+  },
+
+  /**
+   * Get current authenticated admin
+   * @returns {Promise} - { id, name, email, role }
+   */
+  me: async () => {
+    const response = await adminApi.get('/api/admin/me')
+    return response.data
+  },
+
+  /**
+   * Get all complaints with filters and pagination
+   * @param {Object} params - { page, limit, status, issue_type, ward, search }
+   * @returns {Promise} - { complaints, total, page, limit, pages }
+   */
+  getComplaints: async (params = {}) => {
+    // Build query string, skip empty params
+    const queryParams = {}
+    if (params.page) queryParams.page = params.page
+    if (params.limit) queryParams.limit = params.limit
+    if (params.status) queryParams.status = params.status
+    if (params.issue_type) queryParams.issue_type = params.issue_type
+    if (params.ward) queryParams.ward = params.ward
+    if (params.search) queryParams.search = params.search
+    
+    const response = await adminApi.get('/api/admin/complaints', {
+      params: queryParams
+    })
+    return response.data
+  },
+
+  /**
+   * Get single complaint by ID
+   * @param {string} id - Complaint ID
+   * @returns {Promise} - Complaint object with user info
+   */
+  getComplaint: async (id) => {
+    const response = await adminApi.get(`/api/admin/complaints/${id}`)
+    return response.data
+  },
+
+  /**
+   * Update complaint status
+   * @param {string} id - Complaint ID
+   * @param {string} status - New status (Submitted, In Progress, Resolved, Rejected)
+   * @returns {Promise} - { success, complaint_id, new_status, updated_at }
+   */
+  updateStatus: async (id, status) => {
+    const response = await adminApi.patch(`/api/admin/complaints/${id}/status`, {
+      status
+    })
+    return response.data
+  },
+
+  /**
+   * Get admin dashboard statistics
+   * @returns {Promise} - { total, submitted, in_progress, resolved, rejected, by_issue_type, by_severity }
+   */
+  getStats: async () => {
+    const response = await adminApi.get('/api/admin/stats')
+    return response.data
+  }
+}
+
 // Export axios instance for custom requests
 export default api
