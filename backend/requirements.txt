@@ -1,0 +1,12 @@
+flask
+flask-cors
+pymongo
+python-dotenv
+bcrypt
+PyJWT
+google-generativeai
+groq
+cloudinary
+requests
+Pillow
+gunicorn
