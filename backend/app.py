@@ -20,7 +20,6 @@ import jwt
 from pymongo import MongoClient
 import cloudinary
 import cloudinary.uploader
-import google.generativeai as genai
 from groq import Groq
 
 # ============================================================================
@@ -63,14 +62,14 @@ cloudinary.config(
 )
 
 # ============================================================================
-# GEMINI AI CLIENT
+# GEMINI AI CLIENT (Using REST API directly)
 # ============================================================================
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is required")
 
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+# Updated to latest model: gemini-2.5-flash-lite (gemini-1.5-flash is deprecated)
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
 
 # ============================================================================
 # GROQ AI CLIENT
@@ -464,6 +463,8 @@ def analyze_image():
         
         # Analyze image with Gemini AI
         try:
+            print(f"🔍 Starting Gemini analysis for image: {image_url}")
+            
             system_prompt = """You are a civic issue classifier for Mumbai's BMC (Brihanmumbai Municipal Corporation).
 Analyze the image and return ONLY valid JSON with this exact structure:
 {
@@ -477,8 +478,10 @@ Do not include any text outside the JSON. If not a civic issue, set issue_type t
             
             # Download image from Cloudinary URL to send to Gemini
             import requests
+            print(f"📥 Downloading image from Cloudinary...")
             image_response = requests.get(image_url)
             image_data = image_response.content
+            print(f"✅ Image downloaded: {len(image_data)} bytes")
             
             # Determine mime type
             mime_type = 'image/jpeg'
@@ -490,10 +493,49 @@ Do not include any text outside the JSON. If not a civic issue, set issue_type t
             # Generate content with Gemini using image bytes
             import PIL.Image
             import io
-            img = PIL.Image.open(io.BytesIO(image_data))
+            import base64
             
-            response = gemini_model.generate_content([system_prompt, img])
-            gemini_text = response.text.strip()
+            print(f"🖼️ Converting to PIL Image...")
+            img = PIL.Image.open(io.BytesIO(image_data))
+            print(f"✅ PIL Image created: {img.size}, mode: {img.mode}")
+            
+            # Convert image to base64 for Gemini REST API
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG')
+            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            print(f"🤖 Calling Gemini API via REST...")
+            
+            # Call Gemini REST API directly
+            gemini_payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": system_prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/jpeg",
+                                "data": image_base64
+                            }
+                        }
+                    ]
+                }]
+            }
+            
+            gemini_response = requests.post(
+                GEMINI_API_URL,
+                json=gemini_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if gemini_response.status_code != 200:
+                raise Exception(f"Gemini API error: {gemini_response.status_code} - {gemini_response.text}")
+            
+            gemini_data = gemini_response.json()
+            gemini_text = gemini_data['candidates'][0]['content']['parts'][0]['text'].strip()
+            
+            print(f"✅ Gemini response received: {len(gemini_text)} chars")
+            print(f"📄 Gemini raw response: {gemini_text[:200]}...")
             
             # Parse JSON (remove markdown code blocks if present)
             if gemini_text.startswith('```'):
@@ -513,12 +555,17 @@ Do not include any text outside the JSON. If not a civic issue, set issue_type t
             }, 200)
             
         except Exception as e:
-            # Gemini analysis failed - return default values
+            # Gemini analysis failed - log error and return default values
+            print(f"❌ GEMINI ERROR: {str(e)}")
+            print(f"Error type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+            
             return success({
                 'image_url': image_url,
                 'issue_type': 'Other',
                 'severity': 'Medium',
-                'description': 'Unable to analyze image',
+                'description': f'Unable to analyze image: {str(e)}',
                 'department': 'General',
                 'confidence': 0
             }, 200)
