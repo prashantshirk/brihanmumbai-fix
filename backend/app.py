@@ -8,6 +8,7 @@ Handles: User auth, image upload, AI classification, complaint generation, Mongo
 # ============================================================================
 import os
 import json
+import time
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -331,6 +332,19 @@ WARD_DEPARTMENTS = {
         "office": "BMC Head Office, Mumbai"
     }
 }
+
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
+START_TIME = time.time()
+
+@app.route('/health')
+def health():
+    uptime_seconds = int(time.time() - START_TIME)
+    return jsonify({
+        "status": "ok",
+        "uptime_seconds": uptime_seconds
+    }), 200
 
 
 # ============================================================================
