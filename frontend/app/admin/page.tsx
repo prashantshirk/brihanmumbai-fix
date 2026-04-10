@@ -69,6 +69,7 @@ interface Complaint {
   citizenName: string;
   citizenEmail: string;
   description: string;
+  complaintText?: string;
   image_url?: string;
 }
 
@@ -133,6 +134,7 @@ export default function AdminDashboardPage() {
     citizenName: complaint.user_name || "Citizen",
     citizenEmail: complaint.user_email || "N/A",
     description: complaint.description || "",
+    complaintText: complaint.complaint_text || "",
     image_url: complaint.image_url,
   });
 
@@ -600,6 +602,13 @@ export default function AdminDashboardPage() {
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">Description</p>
                   <p className="text-sm bg-muted p-3 rounded-lg">{selectedComplaint.description}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">Formal Complaint Letter (AI Generated)</p>
+                  <p className="text-sm bg-muted p-3 rounded-lg whitespace-pre-wrap">
+                    {selectedComplaint.complaintText || "Formal complaint letter not available for this complaint."}
+                  </p>
                 </div>
               </div>
 

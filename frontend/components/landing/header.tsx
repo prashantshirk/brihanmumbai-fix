@@ -1,19 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { hasUserSession } from "@/lib/auth";
-import { Menu, X } from "lucide-react";
+import { hasUserSession, logout } from "@/lib/auth";
+import { LogOut, Menu, X } from "lucide-react";
 import { useState } from "react";
 
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  const isLoggedIn = hasUserSession();
+  const isDashboardView = isLoggedIn && pathname === "/dashboard";
 
   function handleReportClick(e: React.MouseEvent) {
     e.preventDefault();
-    router.push(hasUserSession() ? "/report" : "/login");
+    router.push(isLoggedIn ? "/report" : "/login");
+  }
+
+  async function handleLogout() {
+    await logout();
   }
 
   return (
@@ -30,12 +37,16 @@ export function Header() {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center gap-8">
-            <Link href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              Features
-            </Link>
-            <Link href="#how-it-works" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              How It Works
-            </Link>
+            {!isDashboardView && (
+              <>
+                <Link href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  Features
+                </Link>
+                <Link href="#how-it-works" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  How It Works
+                </Link>
+              </>
+            )}
             <Link href="/feed" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Community
             </Link>
@@ -46,7 +57,14 @@ export function Header() {
 
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center gap-3">
-            <Button onClick={handleReportClick}>Report Issue</Button>
+            {isDashboardView ? (
+              <Button variant="outline" onClick={handleLogout} className="inline-flex items-center gap-2">
+                <LogOut className="size-4" />
+                Logout
+              </Button>
+            ) : (
+              <Button onClick={handleReportClick}>Report Issue</Button>
+            )}
           </div>
 
           {/* Mobile Menu Button */}
@@ -63,20 +81,24 @@ export function Header() {
         {mobileMenuOpen && (
           <div className="md:hidden py-4 border-t border-border">
             <div className="flex flex-col gap-4">
-              <Link
-                href="#features"
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Features
-              </Link>
-              <Link
-                href="#how-it-works"
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                How It Works
-              </Link>
+              {!isDashboardView && (
+                <>
+                  <Link
+                    href="#features"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Features
+                  </Link>
+                  <Link
+                    href="#how-it-works"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    How It Works
+                  </Link>
+                </>
+              )}
               <Link
                 href="/feed"
                 className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -92,15 +114,29 @@ export function Header() {
                 Dashboard
               </Link>
               <div className="flex flex-col gap-2 pt-4 border-t border-border">
-                <Button
-                  className="w-full"
-                  onClick={(e) => {
-                    handleReportClick(e);
-                    setMobileMenuOpen(false);
-                  }}
-                >
-                  Report Issue
-                </Button>
+                {isDashboardView ? (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      handleLogout();
+                    }}
+                  >
+                    <LogOut className="size-4 mr-2" />
+                    Logout
+                  </Button>
+                ) : (
+                  <Button
+                    className="w-full"
+                    onClick={(e) => {
+                      handleReportClick(e);
+                      setMobileMenuOpen(false);
+                    }}
+                  >
+                    Report Issue
+                  </Button>
+                )}
               </div>
             </div>
           </div>
