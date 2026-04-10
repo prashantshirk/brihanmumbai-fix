@@ -72,15 +72,40 @@ export interface AdminStats {
 
 // ── Core fetch wrapper ─────────────────────────────────────────────────────
 
+function getBrowserCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const prefix = `${name}=`
+  const found = document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+  if (!found) return null
+  return decodeURIComponent(found.slice(prefix.length))
+}
+
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
   const isFormData = options.body instanceof FormData
+  const isUserAuthCall = path === '/api/auth/login' || path === '/api/auth/register'
+  const isAdminAuthCall = path === '/api/admin/login'
+  const isAdminPath = path.startsWith('/api/admin')
 
   const headers: HeadersInit = {
     ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers || {}),
+  }
+
+  // Fallback auth header from frontend-domain cookies.
+  // This keeps API auth working even when third-party backend cookies
+  // are blocked by browser privacy settings.
+  if (typeof window !== 'undefined' && !('Authorization' in headers)) {
+    const tokenName = isAdminPath ? 'bmf_admin_token' : 'bmf_token'
+    const token = getBrowserCookie(tokenName)
+    if (token) {
+      ;(headers as Record<string, string>).Authorization = `Bearer ${token}`
+    }
   }
 
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -90,23 +115,34 @@ async function apiFetch<T>(
   })
 
   if (res.status === 401) {
-    // Token expired or missing — middleware will redirect on next navigation
-    // Clear any stale session info
+    const err = await res.json().catch(() => ({ error: 'Unauthorized' }))
+    const message = err.error || 'Unauthorized'
+
+    // Keep user on auth screens and show friendly message
+    if (isUserAuthCall || isAdminAuthCall) {
+      if (message === 'Invalid credentials' || message === 'User not found' || message === 'Invalid admin credentials') {
+        throw new Error('Email or password is wrong')
+      }
+      throw new Error(message)
+    }
+
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('bmf_user_info')
       clearUserMiddlewareCookie()
       window.location.href = '/login'
     }
-    throw new Error('Unauthorized')
+    throw new Error(message)
   }
 
   if (res.status === 403) {
+    const err = await res.json().catch(() => ({ error: 'Forbidden' }))
+    const message = err.error || 'Forbidden'
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('bmf_admin_info')
       clearAdminMiddlewareCookie()
       window.location.href = '/admin/login'
     }
-    throw new Error('Forbidden')
+    throw new Error(message)
   }
 
   if (!res.ok) {
