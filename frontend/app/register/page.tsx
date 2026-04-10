@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { authAPI } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,13 +46,14 @@ export default function RegisterPage() {
     }
 
     setIsLoading(true);
-
-    // Simulate registration
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mock successful registration
-    setIsLoading(false);
-    router.push("/dashboard");
+    try {
+      await authAPI.register(name, email, password);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed");
+    } finally {
+      setIsLoading(false);
+    }
   }, [mounted, name, email, password, confirmPassword, router]);
 
   return (
@@ -168,11 +170,11 @@ export default function RegisterPage() {
 
         <p className="text-xs text-muted-foreground text-center mt-6">
           By creating an account, you agree to our{" "}
-          <Link href="/terms" className="hover:underline">
+          <Link href="/legal#terms-of-service" className="hover:underline">
             Terms of Service
           </Link>{" "}
           and{" "}
-          <Link href="/privacy" className="hover:underline">
+          <Link href="/legal#privacy-policy" className="hover:underline">
             Privacy Policy
           </Link>
         </p>

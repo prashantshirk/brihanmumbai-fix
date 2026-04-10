@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { hasUserSession } from "@/lib/auth";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const router = useRouter();
+
+  function handleReportClick(e: React.MouseEvent) {
+    e.preventDefault();
+    router.push(hasUserSession() ? "/report" : "/login");
+  }
 
   return (
     <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
@@ -38,9 +46,7 @@ export function Header() {
 
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center gap-3">
-            <Button asChild>
-              <Link href="/login">Login</Link>
-            </Button>
+            <Button onClick={handleReportClick}>Report Issue</Button>
           </div>
 
           {/* Mobile Menu Button */}
@@ -86,8 +92,14 @@ export function Header() {
                 Dashboard
               </Link>
               <div className="flex flex-col gap-2 pt-4 border-t border-border">
-                <Button asChild className="w-full">
-                  <Link href="/login">Login</Link>
+                <Button
+                  className="w-full"
+                  onClick={(e) => {
+                    handleReportClick(e);
+                    setMobileMenuOpen(false);
+                  }}
+                >
+                  Report Issue
                 </Button>
               </div>
             </div>

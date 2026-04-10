@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Header } from "@/components/landing/header";
 import { Footer } from "@/components/landing/footer";
+import { complaintAPI, Complaint as ApiComplaint } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,113 +34,77 @@ import {
   MapPin,
   Calendar,
   Building2,
+  Navigation,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
 
-// Mock data for complaints
-const mockComplaints = [
-  {
-    id: "BMF-K7X2A9-P4QM",
-    issueType: "Pothole",
-    severity: "High",
-    location: "Link Road, near Andheri Station",
-    ward: "K/W-Ward",
-    status: "In Progress",
-    department: "Roads & Infrastructure",
-    submittedAt: "2024-01-15T10:30:00Z",
-    imageUrl: "/api/placeholder/400/300",
-    description: "Large pothole causing traffic disruption",
-  },
-  {
-    id: "BMF-M3B8C2-R7TN",
-    issueType: "Garbage Accumulation",
-    severity: "Critical",
-    location: "Sector 5, Vashi",
-    ward: "H/E-Ward",
-    status: "Submitted",
-    department: "Sanitation",
-    submittedAt: "2024-01-14T14:20:00Z",
-    imageUrl: "/api/placeholder/400/300",
-    description: "Garbage piling up for over a week",
-  },
-  {
-    id: "BMF-P9D4E5-S2KL",
-    issueType: "Street Light",
-    severity: "Medium",
-    location: "MG Road, Fort",
-    ward: "A-Ward",
-    status: "Resolved",
-    department: "Electricity",
-    submittedAt: "2024-01-10T09:15:00Z",
-    imageUrl: "/api/placeholder/400/300",
-    description: "Street light not working for 3 days",
-  },
-  {
-    id: "BMF-Q1F6G7-T8UV",
-    issueType: "Water Leakage",
-    severity: "High",
-    location: "Station Road, Bandra",
-    ward: "H/W-Ward",
-    status: "In Progress",
-    department: "Water Supply",
-    submittedAt: "2024-01-12T16:45:00Z",
-    imageUrl: "/api/placeholder/400/300",
-    description: "Major water pipe leak causing wastage",
-  },
-  {
-    id: "BMF-R2H8I9-W3XY",
-    issueType: "Road Damage",
-    severity: "Medium",
-    location: "LBS Marg, Kurla",
-    ward: "L-Ward",
-    status: "Resolved",
-    department: "PWD",
-    submittedAt: "2024-01-08T11:30:00Z",
-    imageUrl: "/api/placeholder/400/300",
-    description: "Road surface damaged due to waterlogging",
-  },
-  {
-    id: "BMF-S3J9K0-Z4AB",
-    issueType: "Pothole",
-    severity: "Low",
-    location: "Linking Road, Santacruz",
-    ward: "H/W-Ward",
-    status: "Submitted",
-    department: "Roads & Infrastructure",
-    submittedAt: "2024-01-16T08:20:00Z",
-    imageUrl: "/api/placeholder/400/300",
-    description: "Small pothole developing near school",
-  },
-];
-
 interface Complaint {
   id: string;
   issueType: string;
+  issue_type?: string;
   severity: string;
   location: string;
   ward: string;
   status: string;
   department: string;
   submittedAt: string;
-  imageUrl: string;
+  image_url?: string;
+  imageUrl?: string;
   description: string;
+  additional_details?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export default function DashboardPage() {
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [activeTab, setActiveTab] = useState("all");
   const itemsPerPage = 10;
 
+  useEffect(() => {
+    complaintAPI
+      .list(1, 10)
+      .then((data) => {
+        const mapped = (data.complaints || []).map((complaint: ApiComplaint) => ({
+          id: complaint.id || complaint._id || "",
+          issueType: complaint.issue_type || "",
+          issue_type: complaint.issue_type || "",
+          severity: complaint.severity || "Low",
+          location: complaint.location || "",
+          ward: complaint.ward_number || "",
+          status: complaint.status || "Submitted",
+          department: complaint.department || "General",
+          submittedAt: complaint.created_at || "",
+          image_url: complaint.image_url,
+          imageUrl: complaint.image_url,
+          description: complaint.description || "",
+          additional_details: complaint.additional_details,
+          latitude: complaint.latitude,
+          longitude: complaint.longitude,
+        }));
+        setComplaints(mapped);
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        console.error("Failed to load complaints:", err);
+        setIsLoading(false);
+      });
+  }, []);
+
+  const complaint = selectedComplaint;
+
   const stats = {
-    total: mockComplaints.length,
-    submitted: mockComplaints.filter((c) => c.status === "Submitted").length,
-    inProgress: mockComplaints.filter((c) => c.status === "In Progress").length,
-    resolved: mockComplaints.filter((c) => c.status === "Resolved").length,
+    total: complaints.length,
+    submitted: complaints.filter((c) => c.status === "Submitted").length,
+    inProgress: complaints.filter((c) => c.status === "In Progress").length,
+    resolved: complaints.filter((c) => c.status === "Resolved").length,
   };
 
-  const filteredComplaints = mockComplaints.filter((complaint) => {
+  const filteredComplaints = complaints.filter((complaint) => {
     if (activeTab === "all") return true;
     if (activeTab === "submitted") return complaint.status === "Submitted";
     if (activeTab === "progress") return complaint.status === "In Progress";
@@ -178,6 +143,7 @@ export default function DashboardPage() {
   };
 
   const formatDate = (dateString: string) => {
+    if (!dateString) return "N/A";
     return new Date(dateString).toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
@@ -284,7 +250,9 @@ export default function DashboardPage() {
                 </TabsList>
 
                 <TabsContent value={activeTab}>
-                  {paginatedComplaints.length > 0 ? (
+                  {isLoading ? (
+                    <div className="text-center py-12 text-sm text-muted-foreground">Loading complaints...</div>
+                  ) : paginatedComplaints.length > 0 ? (
                     <>
                       {/* Desktop Table */}
                       <div className="hidden md:block">
@@ -303,9 +271,9 @@ export default function DashboardPage() {
                           </TableHeader>
                           <TableBody>
                             {paginatedComplaints.map((complaint) => (
-                              <TableRow key={complaint.id}>
+                              <TableRow key={`${complaint.id}-${complaint.submittedAt}`}>
                                 <TableCell className="font-mono text-xs">
-                                  {complaint.id.substring(0, 12)}...
+                                  {complaint.id ? `${complaint.id.substring(0, 12)}...` : "N/A"}
                                 </TableCell>
                                 <TableCell className="font-medium">
                                   {complaint.issueType}
@@ -343,7 +311,7 @@ export default function DashboardPage() {
                       {/* Mobile Cards */}
                       <div className="md:hidden space-y-4">
                         {paginatedComplaints.map((complaint) => (
-                          <Card key={complaint.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedComplaint(complaint)}>
+                          <Card key={`${complaint.id}-${complaint.submittedAt}`} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedComplaint(complaint)}>
                             <CardContent className="pt-4">
                               <div className="flex items-start justify-between gap-4">
                                 <div className="space-y-2 flex-1">
@@ -426,54 +394,86 @@ export default function DashboardPage() {
       </main>
 
       {/* Complaint Detail Dialog */}
-      <Dialog open={!!selectedComplaint} onOpenChange={() => setSelectedComplaint(null)}>
+      <Dialog open={!!complaint} onOpenChange={() => setSelectedComplaint(null)}>
         <DialogContent className="sm:max-w-2xl">
-          {selectedComplaint && (
+          {complaint && (
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  {selectedComplaint.issueType}
-                  <Badge className={getSeverityColor(selectedComplaint.severity)}>
-                    {selectedComplaint.severity}
+                  {complaint.issueType}
+                  <Badge className={getSeverityColor(complaint.severity)}>
+                    {complaint.severity}
                   </Badge>
                 </DialogTitle>
                 <DialogDescription>
-                  Complaint ID: {selectedComplaint.id}
+                  Complaint ID: {complaint.id}
                 </DialogDescription>
               </DialogHeader>
 
               <div className="space-y-6">
                 {/* Image */}
-                <div className="aspect-video bg-muted rounded-lg overflow-hidden">
-                  <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                    Issue Image
-                  </div>
+                <div className="rounded-lg">
+                  <img
+                    src={complaint.image_url || complaint.imageUrl}
+                    alt={complaint.issue_type || "Complaint image"}
+                    className="w-full h-48 object-cover rounded-lg"
+                    loading="lazy"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      target.style.display = "none";
+                      const parent = target.parentElement;
+                      if (parent && !parent.querySelector(".img-fallback")) {
+                        const fallback = document.createElement("div");
+                        fallback.className =
+                          "img-fallback w-full h-48 bg-muted rounded-lg flex items-center justify-center text-muted-foreground text-sm";
+                        fallback.textContent = complaint.issue_type || "Image unavailable";
+                        parent.appendChild(fallback);
+                      }
+                    }}
+                  />
                 </div>
 
                 {/* Details Grid */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground flex items-center gap-2">
-                      <MapPin className="size-4" /> Location
-                    </p>
-                    <p className="font-medium">{selectedComplaint.location}</p>
+                  <div className="space-y-1 col-span-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Location</p>
+                    <div className="flex items-start gap-2">
+                      <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <span className="text-sm">{complaint.location || "Location not provided"}</span>
+                    </div>
+                    {complaint.latitude && complaint.longitude ? (
+                      <a
+                        href={`https://www.google.com/maps?q=${complaint.latitude},${complaint.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-sm text-primary hover:underline mt-1"
+                      >
+                        <Navigation className="h-4 w-4" />
+                        Open exact location in Google Maps
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                        <Navigation className="h-4 w-4 opacity-40" />
+                        GPS coordinates not available
+                      </span>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground flex items-center gap-2">
                       <Building2 className="size-4" /> Ward
                     </p>
-                    <p className="font-medium">{selectedComplaint.ward}</p>
+                    <p className="font-medium">{complaint.ward}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground flex items-center gap-2">
                       <Calendar className="size-4" /> Submitted
                     </p>
-                    <p className="font-medium">{formatDate(selectedComplaint.submittedAt)}</p>
+                    <p className="font-medium">{formatDate(complaint.submittedAt)}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground">Status</p>
-                    <Badge variant="outline" className={getStatusColor(selectedComplaint.status)}>
-                      {selectedComplaint.status}
+                    <Badge variant="outline" className={getStatusColor(complaint.status)}>
+                      {complaint.status}
                     </Badge>
                   </div>
                 </div>
@@ -481,15 +481,22 @@ export default function DashboardPage() {
                 {/* Description */}
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">Description</p>
-                  <p className="text-sm bg-muted p-3 rounded-lg">{selectedComplaint.description}</p>
+                  <p className="text-sm bg-muted p-3 rounded-lg">{complaint.description}</p>
                 </div>
+
+                {complaint.additional_details && (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Additional Details</p>
+                    <p className="text-sm">{complaint.additional_details}</p>
+                  </div>
+                )}
 
                 {/* Department */}
                 <div className="bg-secondary/50 rounded-lg p-4 flex items-center gap-3">
                   <Building2 className="size-5 text-primary" />
                   <div>
                     <p className="text-sm text-muted-foreground">Assigned to</p>
-                    <p className="font-medium">{selectedComplaint.department}</p>
+                    <p className="font-medium">{complaint.department}</p>
                   </div>
                 </div>
               </div>

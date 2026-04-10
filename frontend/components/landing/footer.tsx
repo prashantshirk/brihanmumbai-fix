@@ -14,7 +14,7 @@ const footerLinks = {
   resources: {
     title: "Resources",
     links: [
-      { label: "How It Works", href: "#how-it-works" },
+      { label: "How It Works", href: "/#how-it-works" },
       { label: "FAQs", href: "/faq" },
       { label: "Support", href: "/support" },
       { label: "API Documentation", href: "/docs" },
@@ -23,7 +23,6 @@ const footerLinks = {
   organization: {
     title: "Organization",
     links: [
-      { label: "About MCGM", href: "/about" },
       { label: "Contact", href: "/contact" },
       { label: "Ward Offices", href: "/wards" },
       { label: "Authority Portal", href: "/admin/login" },
@@ -32,10 +31,10 @@ const footerLinks = {
   legal: {
     title: "Legal",
     links: [
-      { label: "Privacy Policy", href: "/privacy" },
-      { label: "Terms of Service", href: "/terms" },
-      { label: "Cookie Policy", href: "/cookies" },
-      { label: "Accessibility", href: "/accessibility" },
+      { label: "Privacy Policy", href: "/legal#privacy-policy" },
+      { label: "Terms of Service", href: "/legal#terms-of-service" },
+      { label: "Cookie Policy", href: "/legal#cookie-policy" },
+      { label: "Accessibility", href: "/legal#accessibility" },
     ],
   },
 };

@@ -1,184 +1,124 @@
 'use client'
-
-import { useEffect, useState } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { getUser, isLoggedIn, logout } from '@/lib/auth'
-import { LogOut, Menu, X } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { hasUserSession, getUser, logout } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
+import { Menu, X, MapPin, LogOut, LayoutDashboard, FileText, Users } from 'lucide-react'
 
 export default function Navbar() {
-  const router = useRouter()
+  const [mounted, setMounted] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [userName, setUserName] = useState('')
+  const [mobileOpen, setMobileOpen] = useState(false)
   const pathname = usePathname()
-  const [user, setUser] = useState<any>(null)
-  const [isOpen, setIsOpen] = useState(false)
-  const [loggedIn, setLoggedIn] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
-    // Only run on client
-    const checkAuth = () => {
-      setLoggedIn(isLoggedIn())
-      const userData = getUser()
-      setUser(userData)
+    setMounted(true)
+    const loggedIn = hasUserSession()
+    setIsLoggedIn(loggedIn)
+    if (loggedIn) {
+      const user = getUser()
+      setUserName(user?.name?.split(' ')[0] || '')
     }
+  }, [pathname]) // Re-check on every route change
 
-    checkAuth()
-  }, [])
-
-  const isActive = (href: string) => pathname === href
-
-  const handleLogout = () => {
-    logout()
-    setLoggedIn(false)
-    setUser(null)
-    router.push('/login')
+  async function handleLogout() {
+    await logout() // Calls backend to clear httpOnly cookie, then redirects to /
   }
 
-  // Don't render navbar on auth pages
-  if (pathname?.includes('/admin')) {
-    return null
-  }
+  // Don't render until mounted — prevents hydration mismatch
+  if (!mounted) return null
 
-  // Don't render navbar if not logged in
-  if (!loggedIn) {
-    return null
-  }
+  const isLandingPage = !isLoggedIn
 
   return (
-    <nav className="bg-white shadow-md sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+    <nav className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur-sm">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between">
+
           {/* Logo */}
-          <Link href="/" className="flex items-center space-x-2 group">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center group-hover:bg-red-600 transition-colors">
-              <span className="text-white font-bold text-lg">B</span>
+          <Link href={isLoggedIn ? '/dashboard' : '/'} className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary">
+              <MapPin className="h-4 w-4 text-primary-foreground" />
             </div>
-            <span className="font-heading font-bold text-dark hidden sm:inline">
-              BrihanMumbai Fix
-            </span>
+            <span className="font-bold text-lg tracking-tight">BrihanMumbai Fix</span>
           </Link>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-8">
-            <Link
-              href="/"
-              className={`font-medium transition-colors ${
-                isActive('/') ? 'text-primary border-b-2 border-primary' : 'text-gray-700 hover:text-primary'
-              }`}
-            >
-              Submit Complaint
-            </Link>
-            <Link
-              href="/feed"
-              className={`font-medium transition-colors ${
-                isActive('/feed') ? 'text-primary border-b-2 border-primary' : 'text-gray-700 hover:text-primary'
-              }`}
-            >
-              Community Feed
-            </Link>
-            <Link
-              href="/dashboard"
-              className={`font-medium transition-colors ${
-                isActive('/dashboard') ? 'text-primary border-b-2 border-primary' : 'text-gray-700 hover:text-primary'
-              }`}
-            >
-              Dashboard
-            </Link>
-          </div>
-
-          {/* Right Side */}
-          <div className="hidden md:flex items-center space-x-4">
-            {user && (
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                  <span className="text-primary font-semibold text-sm">
-                    {user.name.charAt(0).toUpperCase()}
-                  </span>
+          {/* Desktop nav */}
+          <div className="hidden md:flex items-center gap-6">
+            {isLandingPage ? (
+              // ── Landing page nav (not logged in) ──────────────────────
+              <>
+                <a href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Features</a>
+                <a href="#how-it-works" className="text-sm text-muted-foreground hover:text-foreground transition-colors">How it works</a>
+                <a href="#community" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Community</a>
+                <Link href="/login">
+                  <Button size="sm">Login</Button>
+                </Link>
+              </>
+            ) : (
+              // ── App nav (logged in) ────────────────────────────────────
+              <>
+                <Link
+                  href="/report"
+                  className={`flex items-center gap-1.5 text-sm transition-colors ${pathname === '/report' ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <FileText className="h-4 w-4" />
+                  Report Issue
+                </Link>
+                <Link
+                  href="/feed"
+                  className={`flex items-center gap-1.5 text-sm transition-colors ${pathname === '/feed' ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Users className="h-4 w-4" />
+                  Community Feed
+                </Link>
+                <Link
+                  href="/dashboard"
+                  className={`flex items-center gap-1.5 text-sm transition-colors ${pathname === '/dashboard' ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  Dashboard
+                </Link>
+                <div className="flex items-center gap-3 ml-4 border-l border-border pl-4">
+                  <span className="text-sm text-muted-foreground">Hi, {userName}</span>
+                  <Button variant="outline" size="sm" onClick={handleLogout} className="flex items-center gap-1.5">
+                    <LogOut className="h-3.5 w-3.5" />
+                    Logout
+                  </Button>
                 </div>
-                <div className="flex flex-col">
-                  <p className="font-medium text-sm text-dark">{user.name}</p>
-                  <p className="text-xs text-gray-500">{user.email}</p>
-                </div>
-              </div>
+              </>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleLogout}
-              className="text-primary hover:text-red-600"
-            >
-              <LogOut size={18} className="mr-2" />
-              Logout
-            </Button>
           </div>
 
-          {/* Mobile Menu Button */}
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="md:hidden text-gray-700 hover:text-primary transition-colors"
-          >
-            {isOpen ? <X size={24} /> : <Menu size={24} />}
+          {/* Mobile hamburger */}
+          <button className="md:hidden p-2" onClick={() => setMobileOpen(!mobileOpen)}>
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
 
-        {/* Mobile Navigation */}
-        {isOpen && (
-          <div className="md:hidden pb-4 space-y-3 border-t border-gray-200 pt-4">
-            <Link
-              href="/"
-              onClick={() => setIsOpen(false)}
-              className={`block px-4 py-2 rounded-lg font-medium transition-colors ${
-                isActive('/') ? 'bg-primary/10 text-primary' : 'text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Submit Complaint
-            </Link>
-            <Link
-              href="/feed"
-              onClick={() => setIsOpen(false)}
-              className={`block px-4 py-2 rounded-lg font-medium transition-colors ${
-                isActive('/feed') ? 'bg-primary/10 text-primary' : 'text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Community Feed
-            </Link>
-            <Link
-              href="/dashboard"
-              onClick={() => setIsOpen(false)}
-              className={`block px-4 py-2 rounded-lg font-medium transition-colors ${
-                isActive('/dashboard') ? 'bg-primary/10 text-primary' : 'text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Dashboard
-            </Link>
-
-            {user && (
-              <div className="px-4 py-3 border-t border-gray-200 space-y-3">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                    <span className="text-primary font-semibold">
-                      {user.name.charAt(0).toUpperCase()}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm text-dark">{user.name}</p>
-                    <p className="text-xs text-gray-500">{user.email}</p>
-                  </div>
-                </div>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    handleLogout()
-                    setIsOpen(false)
-                  }}
-                  className="w-full text-primary"
-                >
-                  <LogOut size={18} className="mr-2" />
-                  Logout
+        {/* Mobile menu */}
+        {mobileOpen && (
+          <div className="md:hidden border-t border-border py-4 flex flex-col gap-3">
+            {isLandingPage ? (
+              <>
+                <a href="#features" className="text-sm px-2 py-1.5 text-muted-foreground" onClick={() => setMobileOpen(false)}>Features</a>
+                <a href="#how-it-works" className="text-sm px-2 py-1.5 text-muted-foreground" onClick={() => setMobileOpen(false)}>How it works</a>
+                <Link href="/login" onClick={() => setMobileOpen(false)}>
+                  <Button className="w-full mt-2">Login</Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/report" className="text-sm px-2 py-1.5" onClick={() => setMobileOpen(false)}>Report Issue</Link>
+                <Link href="/feed" className="text-sm px-2 py-1.5" onClick={() => setMobileOpen(false)}>Community Feed</Link>
+                <Link href="/dashboard" className="text-sm px-2 py-1.5" onClick={() => setMobileOpen(false)}>Dashboard</Link>
+                <Button variant="outline" className="w-full mt-2" onClick={() => { setMobileOpen(false); handleLogout() }}>
+                  <LogOut className="h-4 w-4 mr-2" /> Logout
                 </Button>
-              </div>
+              </>
             )}
           </div>
         )}

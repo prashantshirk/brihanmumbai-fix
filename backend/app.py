@@ -333,11 +333,14 @@ def generate_token(user_id: str, role: str = 'user') -> str:
 
 def verify_token(request):
     """
-    Hardened JWT verification.
-    - Checks Authorization header format strictly
-    - Validates algorithm explicitly (prevents 'none' algorithm attack)
-    - Validates payload structure (not just presence of user_id)
-    - Requires user_id, exp, and role claims
+    Hardened JWT verification. Reads from Authorization header first,
+    then falls back to bmf_token cookie. This supports both:
+    - Direct API calls with Authorization: Bearer <token>
+    - Browser requests where httpOnly cookie is sent automatically
+    
+    Priority:
+    1. Authorization header
+    2. bmf_token cookie (httpOnly, set by Flask on login)
     
     Args:
         request: Flask request object
@@ -346,21 +349,28 @@ def verify_token(request):
         str: user_id if successful
         Raises: abort(401) or abort(403) on any failure
     """
+    token = None
+
+    # Priority 1: Authorization header
     auth_header = request.headers.get('Authorization', '')
-    
-    if not auth_header:
-        abort(401, 'Authorization header missing')
-    
-    parts = auth_header.split()
-    if len(parts) != 2 or parts[0].lower() != 'bearer':
-        abort(401, 'Invalid Authorization header format')
-    
-    token = parts[1]
-    
+    if auth_header:
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].lower() == 'bearer':
+            token = parts[1]
+        else:
+            abort(401, 'Invalid Authorization header format')
+
+    # Priority 2: httpOnly cookie fallback
+    if not token:
+        token = request.cookies.get('bmf_token')
+
+    if not token:
+        abort(401, 'Authentication required')
+
     # Reject tokens that are obviously too long (possible attack vector)
     if len(token) > 2048:
         abort(401, 'Invalid token')
-    
+
     try:
         payload = jwt.decode(
             token,
@@ -375,19 +385,22 @@ def verify_token(request):
         abort(401, 'Token has expired. Please log in again.')
     except jwt.InvalidTokenError:
         abort(401, 'Invalid token')
-    
+
     user_id = payload.get('user_id')
     if not user_id or not isinstance(user_id, str):
         abort(401, 'Malformed token payload')
-    
+
     return user_id
 
 
 def verify_admin(request):
     """
     Verify admin JWT token and check admin role.
-    - Calls verify_token() for core JWT validation
-    - Additionally checks role == 'admin'
+    Reads from Authorization header first, then falls back to bmf_admin_token cookie.
+    
+    Priority:
+    1. Authorization header
+    2. bmf_admin_token cookie (httpOnly, set by Flask on admin login)
     
     Args:
         request: Flask request object
@@ -396,19 +409,52 @@ def verify_admin(request):
         str: user_id if successful and user is admin
         Raises: abort(401) if not authenticated, abort(403) if not admin
     """
-    user_id = verify_token(request)
-    
-    try:
-        auth_header = request.headers.get('Authorization', '')
-        token = auth_header.split()[1]
-        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        role = payload.get('role', '')
-    except Exception:
+    token = None
+
+    # Priority 1: Authorization header
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header:
+        parts = auth_header.split()
+        if len(parts) == 2 and parts[0].lower() == 'bearer':
+            token = parts[1]
+        else:
+            abort(401, 'Invalid Authorization header format')
+
+    # Priority 2: httpOnly cookie fallback
+    if not token:
+        token = request.cookies.get('bmf_admin_token')
+
+    if not token:
+        abort(401, 'Authentication required')
+
+    # Reject tokens that are obviously too long (possible attack vector)
+    if len(token) > 2048:
         abort(401, 'Invalid token')
-    
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=['HS256'],
+            options={
+                'require': ['user_id', 'exp', 'role'],
+                'verify_exp': True
+            }
+        )
+    except jwt.ExpiredSignatureError:
+        abort(401, 'Token has expired. Please log in again.')
+    except jwt.InvalidTokenError:
+        abort(401, 'Invalid token')
+
+    # Check admin role
+    role = payload.get('role', '')
     if role != 'admin':
         abort(403, 'Admin access required')
-    
+
+    user_id = payload.get('user_id')
+    if not user_id or not isinstance(user_id, str):
+        abort(401, 'Malformed token payload')
+
     return user_id
 
 
@@ -704,38 +750,16 @@ def login():
 def get_current_user():
     """Get current authenticated user's information"""
     try:
-        # Verify token and get user_id
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return error('Authorization header is missing', 401)
-        
-        try:
-            # Expected format: "Bearer <token>"
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return error('Token has expired', 401)
-        except jwt.InvalidTokenError:
-            return error('Invalid token', 401)
-        except IndexError:
-            return error('Invalid authorization header format', 401)
-        
-        # Fetch user from database
+        user_id = verify_token(request)
         user = users_collection.find_one({'_id': safe_object_id(user_id)})
-        
         if not user:
             return error('User not found', 404)
-        
-        # Return user information
         return success({
             'id': str(user['_id']),
             'name': user['name'],
             'email': user['email'],
             'created_at': user['created_at'].isoformat()
         }, 200)
-        
     except Exception as e:
         return error(f'Failed to fetch user: {str(e)}', 500)
 
@@ -1361,6 +1385,7 @@ def create_complaint():
         ward_number = sanitize_string(data.get('ward_number', 'N/A'), max_length=20)
         latitude = data.get('latitude')
         longitude = data.get('longitude')
+        additional_details = sanitize_string(data.get('additional_details', ''), max_length=1000)
         
         # Generate formal complaint text with Groq
         try:
@@ -1421,6 +1446,7 @@ A Concerned Citizen of Mumbai"""
             'ward_number': ward_number,
             'latitude': latitude,
             'longitude': longitude,
+            'additional_details': additional_details,
             'complaint_text': complaint_text,
             'status': 'Submitted',
             'created_at': datetime.utcnow(),
@@ -1606,6 +1632,40 @@ def update_complaint_status(complaint_id):
 # ============================================================================
 # COMMUNITY FEED ROUTE
 # ============================================================================
+
+@app.route('/api/feed/preview', methods=['GET'])
+@rate_limit(max_requests=120, window_seconds=60)
+def get_feed_preview():
+    """Public preview of 4 most recent complaints — no auth required"""
+    try:
+        complaints_cursor = complaints_collection.find({}).sort('created_at', -1).limit(4)
+        posts = []
+        for complaint in complaints_cursor:
+            try:
+                user = users_collection.find_one(
+                    {'_id': safe_object_id(str(complaint['user_id']))},
+                    {'name': 1}
+                )
+                citizen_name = user['name'] if user else 'Anonymous'
+                posts.append({
+                    'id': str(complaint['_id']),
+                    'citizen_name': citizen_name,
+                    'image_url': complaint.get('image_url', ''),
+                    'issue_type': complaint.get('issue_type', ''),
+                    'severity': complaint.get('severity', ''),
+                    'location': complaint.get('location', ''),
+                    'ward_number': complaint.get('ward_number', ''),
+                    'latitude': complaint.get('latitude'),
+                    'longitude': complaint.get('longitude'),
+                    'status': complaint.get('status', 'Submitted'),
+                    'created_at': complaint['created_at'].isoformat() if complaint.get('created_at') else None
+                })
+            except Exception:
+                continue
+        return success({'posts': posts, 'total': len(posts)}, 200)
+    except Exception as e:
+        return error(f'Failed to fetch preview: {str(e)}', 500)
+
 
 @app.route('/api/feed', methods=['GET'])
 @rate_limit(max_requests=60, window_seconds=60)
@@ -1742,6 +1802,7 @@ COMPLAINTS COLLECTION SCHEMA:
   ward_number: str,
   latitude: float or None,
   longitude: float or None,
+  additional_details: str (optional, user-provided extra context),
   complaint_text: str (Groq generated),
   status: str (Submitted/In Progress/Resolved/Rejected),
   created_at: datetime,

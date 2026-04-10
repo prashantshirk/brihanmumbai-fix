@@ -9,8 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { complaintAPI } from "@/lib/api";
 import {
   Select,
   SelectContent,
@@ -31,6 +31,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Navigation,
 } from "lucide-react";
 
 const wards = [
@@ -60,6 +61,10 @@ export default function ReportPage() {
   const [location, setLocation] = useState("");
   const [ward, setWard] = useState("");
   const [additionalDetails, setAdditionalDetails] = useState("");
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [locationCaptured, setLocationCaptured] = useState(false);
   const [complaintId, setComplaintId] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -124,19 +129,76 @@ export default function ReportPage() {
     setStep(2);
   };
 
+  async function handleGetLocation() {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      return;
+    }
+    setIsGettingLocation(true);
+    setLocationCaptured(false);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        setLatitude(lat);
+        setLongitude(lng);
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+            { headers: { "User-Agent": "BrihanMumbaiFix/1.0 contact@brihanmumbai.in" } }
+          );
+          const data = await res.json();
+          if (data.display_name) {
+            setLocation(data.display_name);
+          }
+          setLocationCaptured(true);
+        } catch {
+          setLocationCaptured(true);
+        }
+        setIsGettingLocation(false);
+      },
+      (err) => {
+        setIsGettingLocation(false);
+        alert("Location access denied. Please type your address manually.");
+        console.error("Geolocation error:", err);
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  }
+
   const handleSubmit = async () => {
-    if (!location || !ward) return;
-    
+    if (!location || !ward || !analysis || !imagePreview) return;
+
     setIsAnalyzing(true);
-    
-    // Simulate submission
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    
-    // Generate mock complaint ID
-    const id = `BMF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    setComplaintId(id);
-    setIsAnalyzing(false);
-    setStep(3);
+    try {
+      const created = await complaintAPI.create({
+        image_url: imagePreview,
+        issue_type: analysis.issueType,
+        severity: analysis.severity,
+        description: analysis.description,
+        department: analysis.department,
+        location,
+        ward_number: ward,
+        latitude,
+        longitude,
+        additional_details: additionalDetails,
+      });
+
+      const id =
+        created.id ||
+        created._id ||
+        `BMF-${Date.now().toString(36).toUpperCase()}-${Math.random()
+          .toString(36)
+          .substring(2, 6)
+          .toUpperCase()}`;
+      setComplaintId(id);
+      setStep(3);
+    } catch (err) {
+      console.error("Failed to submit complaint:", err);
+      alert("Could not submit complaint right now. Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const handleCopy = () => {
@@ -380,13 +442,31 @@ Track status at: https://brihanmumbai.fix/track/${complaintId}`;
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="location">Location / Address</Label>
-                    <Textarea
-                      id="location"
-                      placeholder="E.g., Near Andheri Railway Station, opposite to Landmark building, Link Road"
-                      value={location}
-                      onChange={(e) => setLocation(e.target.value)}
-                      className="min-h-24"
-                    />
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Input
+                        id="location"
+                        placeholder="E.g., Near Andheri Railway Station, opposite Landmark building, Link Road"
+                        value={location}
+                        onChange={(e) => setLocation(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleGetLocation}
+                        disabled={isGettingLocation}
+                        className="flex items-center gap-2 px-3 py-2 text-sm border border-primary text-primary rounded-lg hover:bg-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                      >
+                        {isGettingLocation ? (
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        ) : (
+                          <Navigation className="h-4 w-4" />
+                        )}
+                        {isGettingLocation
+                          ? "Getting location..."
+                          : locationCaptured
+                          ? "Location captured ✓"
+                          : "Use My Location"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -405,14 +485,19 @@ Track status at: https://brihanmumbai.fix/track/${complaintId}`;
                     </Select>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="details">Additional Details (Optional)</Label>
-                    <Textarea
-                      id="details"
-                      placeholder="Any additional information that might help..."
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-foreground">
+                      Additional Details <span className="text-muted-foreground font-normal">(optional)</span>
+                    </label>
+                    <textarea
                       value={additionalDetails}
                       onChange={(e) => setAdditionalDetails(e.target.value)}
+                      placeholder="Any extra context, nearby landmarks, or specific details about the issue..."
+                      rows={3}
+                      maxLength={1000}
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
                     />
+                    <p className="text-xs text-muted-foreground text-right">{additionalDetails.length}/1000</p>
                   </div>
                 </CardContent>
               </Card>
@@ -505,6 +590,10 @@ Track status at: https://brihanmumbai.fix/track/${complaintId}`;
                     setLocation("");
                     setWard("");
                     setAdditionalDetails("");
+                    setLatitude(null);
+                    setLongitude(null);
+                    setIsGettingLocation(false);
+                    setLocationCaptured(false);
                     setComplaintId("");
                   }}
                 >

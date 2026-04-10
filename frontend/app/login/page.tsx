@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { authAPI } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,13 +34,14 @@ export default function LoginPage() {
     }
 
     setIsLoading(true);
-
-    // Simulate login
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mock successful login
-    setIsLoading(false);
-    router.push("/dashboard");
+    try {
+      await authAPI.login(email, password);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setIsLoading(false);
+    }
   }, [mounted, email, password, router]);
 
   return (
@@ -131,11 +133,11 @@ export default function LoginPage() {
 
         <p className="text-xs text-muted-foreground text-center mt-6">
           By signing in, you agree to our{" "}
-          <Link href="/terms" className="hover:underline">
+          <Link href="/legal#terms-of-service" className="hover:underline">
             Terms of Service
           </Link>{" "}
           and{" "}
-          <Link href="/privacy" className="hover:underline">
+          <Link href="/legal#privacy-policy" className="hover:underline">
             Privacy Policy
           </Link>
         </p>

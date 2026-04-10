@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { adminAPI, Complaint as ApiComplaint } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
   TableBody,
@@ -26,9 +29,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -54,102 +57,6 @@ import {
   Shield,
 } from "lucide-react";
 
-// Mock complaints data
-const mockComplaints = [
-  {
-    id: "BMF-K7X2A9-P4QM",
-    issueType: "Pothole",
-    severity: "High",
-    location: "Link Road, near Andheri Station",
-    ward: "K/W-Ward",
-    status: "In Progress",
-    department: "Roads & Infrastructure",
-    submittedAt: "2024-01-15T10:30:00Z",
-    citizenName: "Priya Sharma",
-    citizenEmail: "priya.s@email.com",
-    description: "Large pothole causing traffic disruption",
-  },
-  {
-    id: "BMF-M3B8C2-R7TN",
-    issueType: "Garbage Accumulation",
-    severity: "Critical",
-    location: "Sector 5, Vashi",
-    ward: "H/E-Ward",
-    status: "Submitted",
-    department: "Sanitation",
-    submittedAt: "2024-01-14T14:20:00Z",
-    citizenName: "Rahul Mehta",
-    citizenEmail: "rahul.m@email.com",
-    description: "Garbage piling up for over a week",
-  },
-  {
-    id: "BMF-P9D4E5-S2KL",
-    issueType: "Street Light",
-    severity: "Medium",
-    location: "MG Road, Fort",
-    ward: "A-Ward",
-    status: "Resolved",
-    department: "Electricity",
-    submittedAt: "2024-01-10T09:15:00Z",
-    citizenName: "Anjali Desai",
-    citizenEmail: "anjali.d@email.com",
-    description: "Street light not working for 3 days",
-  },
-  {
-    id: "BMF-Q1F6G7-T8UV",
-    issueType: "Water Leakage",
-    severity: "High",
-    location: "Station Road, Bandra",
-    ward: "H/W-Ward",
-    status: "In Progress",
-    department: "Water Supply",
-    submittedAt: "2024-01-12T16:45:00Z",
-    citizenName: "Mohammed Khan",
-    citizenEmail: "m.khan@email.com",
-    description: "Major water pipe leak causing wastage",
-  },
-  {
-    id: "BMF-R2H8I9-W3XY",
-    issueType: "Road Damage",
-    severity: "Medium",
-    location: "LBS Marg, Kurla",
-    ward: "L-Ward",
-    status: "Submitted",
-    department: "PWD",
-    submittedAt: "2024-01-08T11:30:00Z",
-    citizenName: "Sneha Patil",
-    citizenEmail: "sneha.p@email.com",
-    description: "Road surface damaged due to waterlogging",
-  },
-  {
-    id: "BMF-S3J9K0-Z4AB",
-    issueType: "Illegal Parking",
-    severity: "Low",
-    location: "Hill Road, Bandra",
-    ward: "H/W-Ward",
-    status: "Submitted",
-    department: "Traffic",
-    submittedAt: "2024-01-16T08:20:00Z",
-    citizenName: "Vikram Singh",
-    citizenEmail: "vikram.s@email.com",
-    description: "Vehicles blocking pedestrian access",
-  },
-];
-
-const wards = [
-  "All Wards", "A-Ward", "B-Ward", "C-Ward", "D-Ward", "E-Ward",
-  "F/N-Ward", "F/S-Ward", "G/N-Ward", "G/S-Ward",
-  "H/E-Ward", "H/W-Ward", "K/E-Ward", "K/W-Ward",
-  "L-Ward", "M/E-Ward", "M/W-Ward", "N-Ward",
-  "P/N-Ward", "P/S-Ward", "R/C-Ward", "R/N-Ward",
-  "R/S-Ward", "S-Ward", "T-Ward"
-];
-
-const issueTypes = [
-  "All Types", "Pothole", "Garbage Accumulation", "Street Light",
-  "Water Leakage", "Road Damage", "Illegal Parking", "Tree Hazard",
-];
-
 interface Complaint {
   id: string;
   issueType: string;
@@ -162,10 +69,39 @@ interface Complaint {
   citizenName: string;
   citizenEmail: string;
   description: string;
+  image_url?: string;
 }
 
+const wards = [
+  "All Wards",
+  "A-Ward",
+  "B-Ward",
+  "C-Ward",
+  "D-Ward",
+  "E-Ward",
+  "F/N-Ward",
+  "F/S-Ward",
+  "G/N-Ward",
+  "G/S-Ward",
+  "H/E-Ward",
+  "H/W-Ward",
+  "K/E-Ward",
+  "K/W-Ward",
+  "L-Ward",
+  "M/E-Ward",
+  "M/W-Ward",
+  "N-Ward",
+  "P/N-Ward",
+  "P/S-Ward",
+  "R/C-Ward",
+  "R/N-Ward",
+  "R/S-Ward",
+  "S-Ward",
+  "T-Ward",
+];
+
 export default function AdminDashboardPage() {
-  const [complaints, setComplaints] = useState(mockComplaints);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [wardFilter, setWardFilter] = useState("All Wards");
@@ -173,26 +109,85 @@ export default function AdminDashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [stats, setStats] = useState({
+    total: 0,
+    submitted: 0,
+    inProgress: 0,
+    resolved: 0,
+  });
+
   const itemsPerPage = 20;
 
-  const stats = {
-    total: mockComplaints.length,
-    submitted: mockComplaints.filter((c) => c.status === "Submitted").length,
-    inProgress: mockComplaints.filter((c) => c.status === "In Progress").length,
-    resolved: mockComplaints.filter((c) => c.status === "Resolved").length,
-  };
-
-  const filteredComplaints = complaints.filter((complaint) => {
-    const statusMatch = statusFilter === "All Status" || complaint.status === statusFilter;
-    const wardMatch = wardFilter === "All Wards" || complaint.ward === wardFilter;
-    const typeMatch = typeFilter === "All Types" || complaint.issueType === typeFilter;
-    const searchMatch =
-      searchQuery === "" ||
-      complaint.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      complaint.id.toLowerCase().includes(searchQuery.toLowerCase());
-    return statusMatch && wardMatch && typeMatch && searchMatch;
+  const mapComplaint = (complaint: ApiComplaint & { user_name?: string; user_email?: string }): Complaint => ({
+    id: complaint.id || complaint._id || "",
+    issueType: complaint.issue_type || "",
+    severity: complaint.severity || "Low",
+    location: complaint.location || "N/A",
+    ward: complaint.ward_number || "N/A",
+    status: complaint.status || "Submitted",
+    department: complaint.department || "General",
+    submittedAt: complaint.created_at || "",
+    citizenName: complaint.user_name || "Citizen",
+    citizenEmail: complaint.user_email || "N/A",
+    description: complaint.description || "",
+    image_url: complaint.image_url,
   });
+
+  const fetchAdminData = useCallback(async (showLoading: boolean) => {
+    if (showLoading) {
+      setIsLoading(true);
+    }
+    setError(null);
+
+    try {
+      const [complaintsData, statsData] = await Promise.all([
+        adminAPI.getComplaints({ page: 1, limit: 200 }),
+        adminAPI.getStats(),
+      ]);
+
+      setComplaints((complaintsData.complaints || []).map(mapComplaint));
+      setStats({
+        total: statsData.total || 0,
+        submitted: statsData.submitted || 0,
+        inProgress: statsData.in_progress || 0,
+        resolved: statsData.resolved || 0,
+      });
+      setLastRefresh(new Date());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load admin dashboard data";
+      setError(message);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchAdminData(true);
+  }, [fetchAdminData]);
+
+  const issueTypes = useMemo(() => {
+    const unique = Array.from(new Set(complaints.map((c) => c.issueType).filter(Boolean)));
+    return ["All Types", ...unique];
+  }, [complaints]);
+
+  const filteredComplaints = useMemo(
+    () =>
+      complaints.filter((complaint) => {
+        const statusMatch = statusFilter === "All Status" || complaint.status === statusFilter;
+        const wardMatch = wardFilter === "All Wards" || complaint.ward === wardFilter;
+        const typeMatch = typeFilter === "All Types" || complaint.issueType === typeFilter;
+        const searchMatch =
+          searchQuery === "" ||
+          complaint.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          complaint.id.toLowerCase().includes(searchQuery.toLowerCase());
+        return statusMatch && wardMatch && typeMatch && searchMatch;
+      }),
+    [complaints, searchQuery, statusFilter, typeFilter, wardFilter]
+  );
 
   const totalPages = Math.ceil(filteredComplaints.length / itemsPerPage);
   const paginatedComplaints = filteredComplaints.slice(
@@ -202,17 +197,21 @@ export default function AdminDashboardPage() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setLastRefresh(new Date());
-    setIsRefreshing(false);
+    await fetchAdminData(false);
   };
 
-  const handleStatusUpdate = (complaintId: string, newStatus: string) => {
-    setComplaints((prev) =>
-      prev.map((c) => (c.id === complaintId ? { ...c, status: newStatus } : c))
-    );
-    if (selectedComplaint?.id === complaintId) {
-      setSelectedComplaint((prev) => prev ? { ...prev, status: newStatus } : null);
+  const handleStatusUpdate = async (complaintId: string, newStatus: string) => {
+    try {
+      await adminAPI.updateStatus(complaintId, newStatus);
+      setComplaints((prev) =>
+        prev.map((c) => (c.id === complaintId ? { ...c, status: newStatus } : c))
+      );
+      if (selectedComplaint?.id === complaintId) {
+        setSelectedComplaint((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update complaint status";
+      setError(message);
     }
   };
 
@@ -240,17 +239,17 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
+  const formatDate = (dateString: string) =>
+    dateString
+      ? new Date(dateString).toLocaleDateString("en-IN", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })
+      : "N/A";
 
   return (
     <div className="min-h-screen bg-muted/30">
-      {/* Admin Header */}
       <header className="bg-card border-b border-border sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
@@ -297,231 +296,247 @@ export default function AdminDashboardPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <FileText className="size-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold">{stats.total}</p>
-                  <p className="text-sm text-muted-foreground">Total</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertCircle className="size-4" />
+            <AlertDescription className="flex items-center justify-between gap-4">
+              <span>{error}</span>
+              <Button variant="outline" size="sm" onClick={() => void fetchAdminData(true)}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="size-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                  <AlertCircle className="size-6 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold">{stats.submitted}</p>
-                  <p className="text-sm text-muted-foreground">Submitted</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {isLoading ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <Card key={i}>
+                  <CardContent className="pt-6">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <Card>
+              <CardContent className="pt-6 space-y-3">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                      <FileText className="size-6 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">{stats.total}</p>
+                      <p className="text-sm text-muted-foreground">Total</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="size-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                      <AlertCircle className="size-6 text-blue-500" />
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">{stats.submitted}</p>
+                      <p className="text-sm text-muted-foreground">Submitted</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="size-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
+                      <Clock className="size-6 text-yellow-500" />
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">{stats.inProgress}</p>
+                      <p className="text-sm text-muted-foreground">In Progress</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <div className="size-12 rounded-xl bg-green-500/10 flex items-center justify-center">
+                      <CheckCircle className="size-6 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">{stats.resolved}</p>
+                      <p className="text-sm text-muted-foreground">Resolved</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="size-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
-                  <Clock className="size-6 text-yellow-500" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold">{stats.inProgress}</p>
-                  <p className="text-sm text-muted-foreground">In Progress</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="size-12 rounded-xl bg-green-500/10 flex items-center justify-center">
-                  <CheckCircle className="size-6 text-green-500" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold">{stats.resolved}</p>
-                  <p className="text-sm text-muted-foreground">Resolved</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Complaints Table */}
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
+            <Card>
+              <CardHeader>
                 <CardTitle>All Complaints</CardTitle>
-                <CardDescription>
-                  Last refreshed: {lastRefresh.toLocaleTimeString()}
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {/* Filters */}
-            <div className="flex flex-wrap gap-4 mb-6">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="All Status">All Status</SelectItem>
-                  <SelectItem value="Submitted">Submitted</SelectItem>
-                  <SelectItem value="In Progress">In Progress</SelectItem>
-                  <SelectItem value="Resolved">Resolved</SelectItem>
-                </SelectContent>
-              </Select>
+                <CardDescription>Last refreshed: {lastRefresh.toLocaleTimeString()}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-4 mb-6">
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="All Status">All Status</SelectItem>
+                      <SelectItem value="Submitted">Submitted</SelectItem>
+                      <SelectItem value="In Progress">In Progress</SelectItem>
+                      <SelectItem value="Resolved">Resolved</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-              <Select value={wardFilter} onValueChange={setWardFilter}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Ward" />
-                </SelectTrigger>
-                <SelectContent>
-                  {wards.map((ward) => (
-                    <SelectItem key={ward} value={ward}>
-                      {ward}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <Select value={wardFilter} onValueChange={setWardFilter}>
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="Ward" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {wards.map((ward) => (
+                        <SelectItem key={ward} value={ward}>
+                          {ward}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Issue Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {issueTypes.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <Select value={typeFilter} onValueChange={setTypeFilter}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Issue Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {issueTypes.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {type}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by location or ID..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-
-            {/* Table */}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Issue</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Ward</TableHead>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedComplaints.map((complaint) => (
-                  <TableRow key={complaint.id}>
-                    <TableCell className="font-mono text-xs">
-                      {complaint.id.substring(0, 12)}...
-                    </TableCell>
-                    <TableCell className="font-medium">{complaint.issueType}</TableCell>
-                    <TableCell className="max-w-[200px] truncate">
-                      {complaint.location}
-                    </TableCell>
-                    <TableCell>{complaint.ward}</TableCell>
-                    <TableCell>
-                      <Badge className={getSeverityColor(complaint.severity)}>
-                        {complaint.severity}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={complaint.status}
-                        onValueChange={(value) => handleStatusUpdate(complaint.id, value)}
-                      >
-                        <SelectTrigger className={`w-[130px] h-8 text-xs ${getStatusColor(complaint.status)}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Submitted">Submitted</SelectItem>
-                          <SelectItem value="In Progress">In Progress</SelectItem>
-                          <SelectItem value="Resolved">Resolved</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>{formatDate(complaint.submittedAt)}</TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setSelectedComplaint(complaint)}>
-                            <Eye className="size-4 mr-2" />
-                            View Details
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-6 pt-6 border-t">
-                <p className="text-sm text-muted-foreground">
-                  Showing {(currentPage - 1) * itemsPerPage + 1} to{" "}
-                  {Math.min(currentPage * itemsPerPage, filteredComplaints.length)} of{" "}
-                  {filteredComplaints.length} results
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                  >
-                    <ChevronLeft className="size-4" />
-                  </Button>
-                  <span className="text-sm px-2">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={currentPage === totalPages}
-                  >
-                    <ChevronRight className="size-4" />
-                  </Button>
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by location or ID..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Issue</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead>Ward</TableHead>
+                      <TableHead>Severity</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedComplaints.map((complaint) => (
+                      <TableRow key={complaint.id}>
+                        <TableCell className="font-mono text-xs">
+                          {complaint.id ? `${complaint.id.substring(0, 12)}...` : "N/A"}
+                        </TableCell>
+                        <TableCell className="font-medium">{complaint.issueType}</TableCell>
+                        <TableCell className="max-w-[200px] truncate">{complaint.location}</TableCell>
+                        <TableCell>{complaint.ward}</TableCell>
+                        <TableCell>
+                          <Badge className={getSeverityColor(complaint.severity)}>{complaint.severity}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Select
+                            value={complaint.status}
+                            onValueChange={(value) => void handleStatusUpdate(complaint.id, value)}
+                          >
+                            <SelectTrigger className={`w-[130px] h-8 text-xs ${getStatusColor(complaint.status)}`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Submitted">Submitted</SelectItem>
+                              <SelectItem value="In Progress">In Progress</SelectItem>
+                              <SelectItem value="Resolved">Resolved</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>{formatDate(complaint.submittedAt)}</TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreVertical className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => setSelectedComplaint(complaint)}>
+                                <Eye className="size-4 mr-2" />
+                                View Details
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between mt-6 pt-6 border-t">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {(currentPage - 1) * itemsPerPage + 1} to{" "}
+                      {Math.min(currentPage * itemsPerPage, filteredComplaints.length)} of{" "}
+                      {filteredComplaints.length} results
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={currentPage === 1}
+                      >
+                        <ChevronLeft className="size-4" />
+                      </Button>
+                      <span className="text-sm px-2">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={currentPage === totalPages}
+                      >
+                        <ChevronRight className="size-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
       </main>
 
-      {/* Complaint Detail Dialog */}
       <Dialog open={!!selectedComplaint} onOpenChange={() => setSelectedComplaint(null)}>
         <DialogContent className="sm:max-w-2xl">
           {selectedComplaint && (
@@ -533,18 +548,24 @@ export default function AdminDashboardPage() {
                     {selectedComplaint.severity}
                   </Badge>
                 </DialogTitle>
-                <DialogDescription className="font-mono">
-                  {selectedComplaint.id}
-                </DialogDescription>
+                <DialogDescription className="font-mono">{selectedComplaint.id}</DialogDescription>
               </DialogHeader>
 
               <div className="space-y-6">
-                {/* Image Placeholder */}
-                <div className="aspect-video bg-muted rounded-lg flex items-center justify-center">
-                  <span className="text-muted-foreground">Issue Image</span>
+                <div className="aspect-video bg-muted rounded-lg overflow-hidden">
+                  {selectedComplaint.image_url ? (
+                    <img
+                      src={selectedComplaint.image_url}
+                      alt={selectedComplaint.issueType}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                      Issue Image
+                    </div>
+                  )}
                 </div>
 
-                {/* Details Grid */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground flex items-center gap-2">
@@ -570,14 +591,12 @@ export default function AdminDashboardPage() {
                   </div>
                 </div>
 
-                {/* Citizen Info */}
                 <div className="bg-muted/50 rounded-lg p-4">
                   <p className="text-sm text-muted-foreground mb-2">Reported by</p>
                   <p className="font-medium">{selectedComplaint.citizenName}</p>
                   <p className="text-sm text-muted-foreground">{selectedComplaint.citizenEmail}</p>
                 </div>
 
-                {/* Description */}
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">Description</p>
                   <p className="text-sm bg-muted p-3 rounded-lg">{selectedComplaint.description}</p>
@@ -587,7 +606,7 @@ export default function AdminDashboardPage() {
               <DialogFooter>
                 <Select
                   value={selectedComplaint.status}
-                  onValueChange={(value) => handleStatusUpdate(selectedComplaint.id, value)}
+                  onValueChange={(value) => void handleStatusUpdate(selectedComplaint.id, value)}
                 >
                   <SelectTrigger className="w-[180px]">
                     <SelectValue />

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { adminAPI } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,13 +34,14 @@ export default function AdminLoginPage() {
     }
 
     setIsLoading(true);
-
-    // Simulate login
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mock successful admin login
-    setIsLoading(false);
-    router.push("/admin");
+    try {
+      await adminAPI.login(email, password);
+      router.push("/admin");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Admin login failed");
+    } finally {
+      setIsLoading(false);
+    }
   }, [mounted, email, password, router]);
 
   return (

@@ -1,9 +1,20 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { hasUserSession } from "@/lib/auth";
 import { ArrowRight, Camera, MapPin, CheckCircle2 } from "lucide-react";
 
 export function Hero() {
+  const router = useRouter();
+
+  function handleReportClick(e: React.MouseEvent) {
+    e.preventDefault();
+    router.push(hasUserSession() ? "/report" : "/login");
+  }
+
   return (
     <section className="relative overflow-hidden">
       {/* Background Pattern */}
@@ -28,11 +39,9 @@ export function Hero() {
             </p>
             
             <div className="flex flex-col sm:flex-row gap-4 pt-2">
-              <Button size="lg" asChild className="gap-2">
-                <Link href="/login">
-                  Report an Issue
-                  <ArrowRight className="size-4" />
-                </Link>
+              <Button size="lg" className="gap-2" onClick={handleReportClick}>
+                Report an Issue
+                <ArrowRight className="size-4" />
               </Button>
               <Button size="lg" variant="outline" asChild>
                 <Link href="/feed">View Community Reports</Link>
@@ -64,8 +73,8 @@ export function Hero() {
                 {/* Background Gradient (no image - image upload optional) */}
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-primary/10 to-accent/20" />
                 
-                {/* Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-b from-primary/10 to-accent/10" />
+                {/* Background Image */}
+                <div className="absolute inset-0 bg-[url('/images/pothole-road-india.jpg')] bg-cover bg-center" />
                 
                 {/* Mock UI Elements */}
                 <div className="absolute top-4 left-4 right-4">

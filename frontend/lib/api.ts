@@ -1,27 +1,16 @@
-/**
- * API Client for BrihanMumbai Fix Frontend
- * Replaces old src/api.js with TypeScript + Next.js compatibility
- */
+import { saveUserSession, saveAdminSession } from '@/lib/auth'
 
-// ─────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
 
-export interface User {
-  id: string
-  name: string
-  email: string
-  created_at?: string
-}
+// ── Types ──────────────────────────────────────────────────────────────────
 
-export interface AuthResponse {
-  token: string
-  user: User
-}
+export interface User { id: string; name: string; email: string; created_at?: string }
+export interface AuthResponse { user: User; token?: string }
 
 export interface Complaint {
-  _id: string
-  user_id: string
+  _id?: string
+  id?: string
+  user_id?: string
   image_url: string
   issue_type: string
   severity: 'Low' | 'Medium' | 'High' | 'Critical'
@@ -29,12 +18,13 @@ export interface Complaint {
   department: string
   location: string
   ward_number: string
-  latitude?: number
-  longitude?: number
-  complaint_text: string
+  latitude?: number | null
+  longitude?: number | null
+  complaint_text?: string
+  additional_details?: string
   status: 'Submitted' | 'In Progress' | 'Resolved' | 'Rejected'
-  created_at: string
-  updated_at: string
+  created_at?: string
+  updated_at?: string
   model_used?: string
 }
 
@@ -49,15 +39,16 @@ export interface AnalysisResult {
 }
 
 export interface FeedPost {
-  _id: string
+  id?: string
+  _id?: string
   citizen_name: string
   image_url: string
   issue_type: string
   severity: string
   location: string
   ward_number: string
-  latitude?: number
-  longitude?: number
+  latitude?: number | null
+  longitude?: number | null
   status: string
   created_at: string
 }
@@ -72,177 +63,178 @@ export interface AdminStats {
   by_severity: Record<string, number>
 }
 
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
-
-function getToken(admin = false): string {
-  if (typeof window === 'undefined') return ''
-  return localStorage.getItem(admin ? 'bmf_admin_token' : 'bmf_token') || ''
-}
+// ── Core fetch wrapper ─────────────────────────────────────────────────────
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit = {},
-  admin = false
+  options: RequestInit = {}
 ): Promise<T> {
-  const token = getToken(admin)
+  const isFormData = options.body instanceof FormData
+
   const headers: HeadersInit = {
-    ...options.headers,
+    ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers || {}),
   }
 
-  // Only set Content-Type for non-FormData requests
-  if (!(options.body instanceof FormData)) {
-    (headers as Record<string, string>)['Content-Type'] = 'application/json'
-  }
-
-  if (token) {
-    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
-  }
-
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include', // Always send httpOnly cookies cross-origin
+  })
 
   if (res.status === 401) {
+    // Token expired or missing — middleware will redirect on next navigation
+    // Clear any stale session info
     if (typeof window !== 'undefined') {
-      localStorage.removeItem(admin ? 'bmf_admin_token' : 'bmf_token')
-      localStorage.removeItem(admin ? 'bmf_admin' : 'bmf_user')
-      window.location.href = admin ? '/admin/login' : '/login'
+      sessionStorage.removeItem('bmf_user_info')
+      window.location.href = '/login'
     }
     throw new Error('Unauthorized')
   }
 
+  if (res.status === 403) {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('bmf_admin_info')
+      window.location.href = '/admin/login'
+    }
+    throw new Error('Forbidden')
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Request failed' }))
-    throw new Error(err.error || 'Request failed')
+    throw new Error(err.error || `Request failed with status ${res.status}`)
   }
 
   return res.json() as Promise<T>
 }
 
-// ─────────────────────────────────────────────────────────────
-// Auth API
-// ─────────────────────────────────────────────────────────────
+// ── Auth API ───────────────────────────────────────────────────────────────
 
 export const authAPI = {
-  register: (name: string, email: string, password: string) =>
-    apiFetch<AuthResponse>('/api/auth/register', {
+  register: async (name: string, email: string, password: string): Promise<AuthResponse> => {
+    const data = await apiFetch<AuthResponse>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password }),
-    }),
+    })
+    // Flask set httpOnly cookie. Save user info (not token) for UI.
+    saveUserSession(data.user)
+    return data
+  },
 
-  login: (email: string, password: string) =>
-    apiFetch<AuthResponse>('/api/auth/login', {
+  login: async (email: string, password: string): Promise<AuthResponse> => {
+    const data = await apiFetch<AuthResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
-    }),
+    })
+    saveUserSession(data.user)
+    return data
+  },
 
-  me: () => apiFetch<User>('/api/auth/me'),
+  me: (): Promise<User> =>
+    apiFetch<User>('/api/auth/me'),
 }
 
-// ─────────────────────────────────────────────────────────────
-// Complaint API
-// ─────────────────────────────────────────────────────────────
+// ── Complaint API ──────────────────────────────────────────────────────────
 
 export const complaintAPI = {
-  analyzeImage: (formData: FormData) =>
+  analyzeImage: (formData: FormData): Promise<AnalysisResult> =>
     apiFetch<AnalysisResult>('/api/analyze-image', {
       method: 'POST',
-      body: formData, // FormData — no Content-Type header (fetch sets boundary)
+      body: formData,
     }),
 
-  create: (data: Partial<Complaint>) =>
+  create: (data: Partial<Complaint>): Promise<Complaint> =>
     apiFetch<Complaint>('/api/complaints', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  list: (page = 1, limit = 10) =>
-    apiFetch<{
-      complaints: Complaint[]
-      total: number
-      page: number
-      limit: number
-    }>(`/api/complaints?page=${page}&limit=${limit}`),
+  list: (page = 1, limit = 10): Promise<{
+    complaints: Complaint[]
+    total: number
+    page: number
+    limit: number
+  }> =>
+    apiFetch(`/api/complaints?page=${page}&limit=${limit}`),
 
-  getOne: (id: string) => apiFetch<Complaint>(`/api/complaints/${id}`),
+  getOne: (id: string): Promise<Complaint> =>
+    apiFetch(`/api/complaints/${id}`),
 
-  updateStatus: (id: string, status: string) =>
-    apiFetch<Complaint>(`/api/complaints/${id}/status`, {
+  updateStatus: (id: string, status: string): Promise<Complaint> =>
+    apiFetch(`/api/complaints/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
 }
 
-// ─────────────────────────────────────────────────────────────
-// Feed API
-// ─────────────────────────────────────────────────────────────
+// ── Feed API ───────────────────────────────────────────────────────────────
 
 export const feedAPI = {
-  getPosts: (page = 1, limit = 12) =>
-    apiFetch<{ posts: FeedPost[]; total: number; has_more: boolean }>(
-      `/api/feed?page=${page}&limit=${limit}`
-    ),
+  // Public — no auth needed. Uses plain fetch (no credentials).
+  preview: async (): Promise<{ posts: FeedPost[]; total: number }> => {
+    const res = await fetch(`${BASE_URL}/api/feed/preview`)
+    if (!res.ok) return { posts: [], total: 0 }
+    return res.json()
+  },
+
+  // Protected — sends cookie automatically.
+  getPosts: (page = 1, limit = 12): Promise<{
+    posts: FeedPost[]
+    total: number
+    has_more: boolean
+  }> =>
+    apiFetch(`/api/feed?page=${page}&limit=${limit}`),
 }
 
-// ─────────────────────────────────────────────────────────────
-// Ward API
-// ─────────────────────────────────────────────────────────────
+// ── Admin API ──────────────────────────────────────────────────────────────
+
+export const adminAPI = {
+  login: async (email: string, password: string) => {
+    const data = await apiFetch<{ admin: User; token?: string }>('/api/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    })
+    saveAdminSession(data.admin)
+    return data
+  },
+
+  me: (): Promise<User & { role: string }> =>
+    apiFetch('/api/admin/me'),
+
+  getComplaints: (params: Record<string, string | number> = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v !== '' && v !== undefined && v !== null)
+        .map(([k, v]) => [k, String(v)])
+    ).toString()
+    return apiFetch<{
+      complaints: (Complaint & { user_name: string; user_email: string })[]
+      total: number
+      page: number
+      pages: number
+    }>(`/api/admin/complaints${qs ? '?' + qs : ''}`)
+  },
+
+  getComplaint: (id: string) =>
+    apiFetch<Complaint & { user_name: string; user_email: string }>(
+      `/api/admin/complaints/${id}`
+    ),
+
+  updateStatus: (id: string, status: string) =>
+    apiFetch<{ success: boolean; new_status: string }>(
+      `/api/admin/complaints/${id}/status`,
+      { method: 'PATCH', body: JSON.stringify({ status }) }
+    ),
+
+  getStats: (): Promise<AdminStats> =>
+    apiFetch('/api/admin/stats'),
+}
+
+// ── Ward API ───────────────────────────────────────────────────────────────
 
 export const wardAPI = {
   getInfo: (ward: string) =>
     apiFetch<{ email: string; phone: string; office: string }>(
       `/api/ward-info?ward=${encodeURIComponent(ward)}`
     ),
-}
-
-// ─────────────────────────────────────────────────────────────
-// Admin API
-// ─────────────────────────────────────────────────────────────
-
-export const adminAPI = {
-  login: (email: string, password: string) =>
-    apiFetch<{ token: string; admin: User }>(
-      '/api/admin/login',
-      {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      },
-      true
-    ),
-
-  me: () =>
-    apiFetch<User & { role: string }>('/api/admin/me', {}, true),
-
-  getComplaints: (params: Record<string, string | number>) => {
-    const qs = new URLSearchParams(
-      Object.entries(params)
-        .filter(([, v]) => v !== '' && v !== undefined)
-        .map(([k, v]) => [k, String(v)])
-    ).toString()
-
-    return apiFetch<{
-      complaints: (Complaint & { user_name: string; user_email: string })[]
-      total: number
-      page: number
-      pages: number
-    }>(`/api/admin/complaints?${qs}`, {}, true)
-  },
-
-  getComplaint: (id: string) =>
-    apiFetch<Complaint & { user_name: string; user_email: string }>(
-      `/api/admin/complaints/${id}`,
-      {},
-      true
-    ),
-
-  updateStatus: (id: string, status: string) =>
-    apiFetch<{ success: boolean; new_status: string }>(
-      `/api/admin/complaints/${id}/status`,
-      { method: 'PATCH', body: JSON.stringify({ status }) },
-      true
-    ),
-
-  getStats: () => apiFetch<AdminStats>('/api/admin/stats', {}, true),
 }
