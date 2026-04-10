@@ -53,6 +53,7 @@ interface Complaint {
   imageUrl?: string;
   description: string;
   additional_details?: string;
+  complaintText?: string;
   latitude?: number | null;
   longitude?: number | null;
 }
@@ -83,6 +84,7 @@ export default function DashboardPage() {
           imageUrl: complaint.image_url,
           description: complaint.description || "",
           additional_details: complaint.additional_details,
+          complaintText: complaint.complaint_text || "",
           latitude: complaint.latitude,
           longitude: complaint.longitude,
         }));
@@ -395,7 +397,7 @@ export default function DashboardPage() {
 
       {/* Complaint Detail Dialog */}
       <Dialog open={!!complaint} onOpenChange={() => setSelectedComplaint(null)}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="w-[92vw] sm:!max-w-xl !max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
           {complaint && (
             <>
               <DialogHeader>
@@ -410,7 +412,7 @@ export default function DashboardPage() {
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-6">
+              <div className="space-y-6 min-h-0 overflow-y-auto pr-2">
                 {/* Image */}
                 <div className="rounded-lg">
                   <img
@@ -498,6 +500,13 @@ export default function DashboardPage() {
                     <p className="text-sm text-muted-foreground">Assigned to</p>
                     <p className="font-medium">{complaint.department}</p>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">Formal Complaint Letter (AI Generated)</p>
+                  <p className="text-sm bg-muted p-3 rounded-lg whitespace-pre-wrap">
+                    {complaint.complaintText || "Formal complaint letter not available for this complaint."}
+                  </p>
                 </div>
               </div>
             </>
