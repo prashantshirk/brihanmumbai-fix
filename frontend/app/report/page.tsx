@@ -44,6 +44,7 @@ const wards = [
 ];
 
 interface AnalysisResult {
+  image_url: string;
   issueType: string;
   severity: "Low" | "Medium" | "High" | "Critical";
   department: string;
@@ -109,24 +110,30 @@ export default function ReportPage() {
 
   const handleAnalyze = async () => {
     if (!imageFile) return;
-    
+
     setIsAnalyzing(true);
-    
-    // Simulate AI analysis (in production, this would call the backend)
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    
-    // Mock analysis result
-    const mockAnalysis: AnalysisResult = {
-      issueType: "Pothole",
-      severity: "High",
-      department: "Roads & Infrastructure",
-      confidence: 94,
-      description: "Large pothole detected on road surface. The damage appears to extend approximately 2-3 feet in diameter with significant depth. This poses a safety hazard for vehicles and pedestrians.",
-    };
-    
-    setAnalysis(mockAnalysis);
-    setIsAnalyzing(false);
-    setStep(2);
+    try {
+      const formData = new FormData();
+      formData.append("image", imageFile);
+      const result = await complaintAPI.analyzeImage(formData);
+
+      const parsed: AnalysisResult = {
+        image_url: result.image_url,
+        issueType: result.issue_type,
+        severity: result.severity as AnalysisResult["severity"],
+        department: result.department,
+        confidence: result.confidence,
+        description: result.description,
+      };
+
+      setAnalysis(parsed);
+      setStep(2);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Image analysis failed";
+      alert(message);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   async function handleGetLocation() {
@@ -167,12 +174,12 @@ export default function ReportPage() {
   }
 
   const handleSubmit = async () => {
-    if (!location || !ward || !analysis || !imagePreview) return;
+    if (!location || !ward || !analysis) return;
 
     setIsAnalyzing(true);
     try {
       const created = await complaintAPI.create({
-        image_url: imagePreview,
+        image_url: analysis.image_url,
         issue_type: analysis.issueType,
         severity: analysis.severity,
         description: analysis.description,
@@ -195,7 +202,8 @@ export default function ReportPage() {
       setStep(3);
     } catch (err) {
       console.error("Failed to submit complaint:", err);
-      alert("Could not submit complaint right now. Please try again.");
+      const message = err instanceof Error ? err.message : "Could not submit complaint right now. Please try again.";
+      alert(message);
     } finally {
       setIsAnalyzing(false);
     }
