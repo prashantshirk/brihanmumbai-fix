@@ -540,7 +540,7 @@ export default function AdminDashboardPage() {
       </main>
 
       <Dialog open={!!selectedComplaint} onOpenChange={() => setSelectedComplaint(null)}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
           {selectedComplaint && (
             <>
               <DialogHeader>
@@ -553,7 +553,7 @@ export default function AdminDashboardPage() {
                 <DialogDescription className="font-mono">{selectedComplaint.id}</DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-6">
+              <div className="space-y-6 flex-1 min-h-0 overflow-y-auto pr-1">
                 <div className="aspect-video bg-muted rounded-lg overflow-hidden">
                   {selectedComplaint.image_url ? (
                     <img
