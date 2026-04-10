@@ -12,7 +12,7 @@ export function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const isLoggedIn = hasUserSession();
-  const isDashboardView = isLoggedIn && pathname === "/dashboard";
+  const isDashboardView = pathname.startsWith("/dashboard");
 
   function handleReportClick(e: React.MouseEvent) {
     e.preventDefault();
