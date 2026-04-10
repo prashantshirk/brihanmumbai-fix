@@ -11,14 +11,20 @@ import json
 import time
 from datetime import datetime, timedelta
 from functools import wraps
+from collections import defaultdict
+import threading
+import html
+import re
 
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, abort, g
 from flask_cors import CORS
 from dotenv import load_dotenv
 
 import bcrypt
 import jwt
 from pymongo import MongoClient
+from bson import ObjectId
+from bson.errors import InvalidId
 import cloudinary
 import cloudinary.uploader
 from groq import Groq
@@ -72,22 +78,28 @@ cloudinary.config(
 )
 
 # ============================================================================
-# GEMINI AI CLIENT (Using REST API directly)
+# GEMINI AI CONFIG
 # ============================================================================
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable is required")
+import genai
 
-# Updated to latest model: gemini-2.5-flash-lite (gemini-1.5-flash is deprecated)
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+# Fallback chain: each model has its own separate RPD quota even on same key.
+# Real limits as of April 2026 from Google AI Studio:
+# gemini-2.5-flash      → 20 RPD  (best vision quality)
+# gemini-2.5-flash-lite → 20 RPD  (same key, separate bucket)
+# gemini-3.1-flash-lite → 500 RPD (best RPD, good vision)
+# groq llama vision     → generous free tier (final fallback)
+GEMINI_CONFIGS = [
+    {'api_key': GEMINI_API_KEY, 'model': 'gemini-2.5-flash',        'label': 'gemini-flash'},
+    {'api_key': GEMINI_API_KEY, 'model': 'gemini-2.5-flash-lite',   'label': 'gemini-flash-lite'},
+    {'api_key': GEMINI_API_KEY, 'model': 'gemini-3.1-flash-lite',  'label': 'gemini-31-flash-lite'},
+]
 
 # ============================================================================
 # GROQ AI CLIENT
 # ============================================================================
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY environment variable is required")
-
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ============================================================================
@@ -98,15 +110,209 @@ if not JWT_SECRET:
     raise ValueError("JWT_SECRET environment variable is required")
 
 # ============================================================================
+# SECURITY MIDDLEWARE LAYER
+# ============================================================================
+
+# ──── Section A: Security Headers Middleware ────────────────────────────
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to every response."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    # Remove server fingerprint
+    response.headers.pop('Server', None)
+    response.headers.pop('X-Powered-By', None)
+    return response
+
+
+# ──── Section B: Rate Limiting (in-memory, no Redis needed) ────────────
+
+# Thread-safe in-memory rate limiter
+_rate_limit_store = defaultdict(list)
+_rate_limit_lock = threading.Lock()
+
+def rate_limit(max_requests: int, window_seconds: int):
+    """
+    Decorator that limits requests per IP.
+    Usage: @rate_limit(max_requests=10, window_seconds=60)
+    """
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+            if ip and ',' in ip:
+                ip = ip.split(',')[0].strip()
+            
+            key = f"{f.__name__}:{ip}"
+            now = time.time()
+            
+            with _rate_limit_lock:
+                # Remove timestamps outside the window
+                _rate_limit_store[key] = [
+                    t for t in _rate_limit_store[key] 
+                    if now - t < window_seconds
+                ]
+                
+                if len(_rate_limit_store[key]) >= max_requests:
+                    return error('Too many requests. Please slow down.', 429)
+                
+                _rate_limit_store[key].append(now)
+            
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+# ──── Section C: Input Sanitization Helpers ────────────────────────────
+
+ALLOWED_TEXT_PATTERN = re.compile(r'[<>{}|\[\]\\]')
+
+def sanitize_string(value: str, max_length: int = 500) -> str:
+    """
+    Sanitize a string input:
+    - Strip leading/trailing whitespace
+    - Escape HTML entities
+    - Remove dangerous characters
+    - Enforce max length
+    """
+    if not isinstance(value, str):
+        return ''
+    value = value.strip()
+    value = html.escape(value)                    # &, <, >, ", ' → entities
+    value = ALLOWED_TEXT_PATTERN.sub('', value)   # remove remaining dangerous chars
+    return value[:max_length]
+
+
+def sanitize_email(value: str) -> str:
+    """Validate and sanitize email format."""
+    if not isinstance(value, str):
+        return ''
+    value = value.strip().lower()[:254]
+    email_pattern = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+    if not email_pattern.match(value):
+        return ''
+    return value
+
+
+def get_safe_body() -> dict:
+    """
+    Safely parse JSON body. Returns empty dict on failure.
+    Rejects requests with body larger than 100KB to prevent memory attacks.
+    """
+    if request.content_length and request.content_length > 102400:  # 100KB
+        abort(413, 'Request body too large')
+    try:
+        data = request.get_json(force=False, silent=True)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+# ──── Section C.1: NoSQL Injection Prevention ────────────────────────────
+
+def safe_object_id(id_string: str) -> ObjectId:
+    """
+    Safely convert string to MongoDB ObjectId.
+    Raises 400 error if the string is not a valid ObjectId format.
+    Prevents NoSQL injection via malformed ID strings.
+    """
+    try:
+        return ObjectId(str(id_string)[:24])  # ObjectId is always 24 hex chars
+    except (InvalidId, TypeError, ValueError):
+        abort(400, 'Invalid ID format')
+
+
+def safe_mongo_string(value: str) -> str:
+    """
+    Prevent NoSQL operator injection in string fields.
+    MongoDB operators start with $ — strip any $ from user input.
+    """
+    if not isinstance(value, str):
+        return ''
+    # Remove $ operators that could be used for NoSQL injection
+    return re.sub(r'\$', '', value)[:500]
+
+
+# ──── Section D: File Upload Validation ────────────────────────────────
+
+try:
+    import magic
+except ImportError:
+    magic = None
+
+ALLOWED_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
+MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+
+
+def validate_upload(file) -> tuple:
+    """
+    Validate uploaded file:
+    - Check file exists
+    - Check size limit
+    - Check MIME type from file content (not just extension)
+    - Return (is_valid, error_message)
+    """
+    if not file:
+        return False, 'No file provided'
+    
+    file.seek(0, 2)  # Seek to end
+    size = file.tell()
+    file.seek(0)     # Reset
+    
+    if size > MAX_FILE_SIZE_BYTES:
+        return False, 'File too large. Maximum size is 5MB'
+    
+    if size == 0:
+        return False, 'File is empty'
+    
+    # Read first 2048 bytes to detect real MIME type
+    header = file.read(2048)
+    file.seek(0)
+    
+    if magic:
+        try:
+            detected_mime = magic.from_buffer(header, mime=True)
+            if detected_mime not in ALLOWED_MIME_TYPES:
+                return False, f'Invalid file type. Only JPEG, PNG, WebP allowed'
+        except Exception:
+            # If magic fails, fall back to extension check only
+            filename = getattr(file, 'filename', '')
+            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+            if ext not in {'jpg', 'jpeg', 'png', 'webp'}:
+                return False, 'Invalid file type'
+    else:
+        # Fallback: extension check only if magic not available
+        filename = getattr(file, 'filename', '')
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        if ext not in {'jpg', 'jpeg', 'png', 'webp'}:
+            return False, 'Invalid file type'
+    
+    return True, ''
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
-def generate_token(user_id, role='user'):
-    """Generate JWT token for authentication (expires in 7 days)
+def generate_token(user_id: str, role: str = 'user') -> str:
+    """Generate JWT token with hardened security checks.
+    
     Args:
         user_id: User or admin ID
         role: 'user' or 'admin' (default: 'user')
+    
+    Returns:
+        JWT token string
+    
+    Raises:
+        ValueError if JWT_SECRET is not strong enough
     """
+    if not JWT_SECRET or len(JWT_SECRET) < 32:
+        raise ValueError('JWT_SECRET must be at least 32 characters long')
+    
     payload = {
         'user_id': str(user_id),
         'role': role,
@@ -117,78 +323,85 @@ def generate_token(user_id, role='user'):
     return token
 
 
-def verify_token(request, required_role=None):
-    """Verify JWT token from request cookies and return user_id and role
+def verify_token(request):
+    """
+    Hardened JWT verification.
+    - Checks Authorization header format strictly
+    - Validates algorithm explicitly (prevents 'none' algorithm attack)
+    - Validates payload structure (not just presence of user_id)
+    - Requires user_id, exp, and role claims
+    
     Args:
         request: Flask request object
-        required_role: Optional role to check ('user', 'admin')
+    
     Returns:
-        tuple: (user_id, role) if successful
-        Flask response: error response if failed
+        str: user_id if successful
+        Raises: abort(401) or abort(403) on any failure
     """
-    # Try cookies first, then fallback to Authorization header for debugging
-    token = request.cookies.get('bmf_token') or request.cookies.get('bmf_admin_token')
+    auth_header = request.headers.get('Authorization', '')
     
-    # Fallback to Authorization header if no cookie (for debugging)
-    if not token:
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
+    if not auth_header:
+        abort(401, 'Authorization header missing')
     
-    if not token:
-        return error('Authentication required', 401)
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != 'bearer':
+        abort(401, 'Invalid Authorization header format')
+    
+    token = parts[1]
+    
+    # Reject tokens that are obviously too long (possible attack vector)
+    if len(token) > 2048:
+        abort(401, 'Invalid token')
     
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        user_id = payload['user_id']
-        role = payload.get('role', 'user')  # Default to 'user' for backward compatibility
-        
-        # Check required role if specified
-        if required_role and role != required_role:
-            return error(f'Access denied. {required_role} role required', 403)
-        
-        return user_id, role
-        
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=['HS256'],  # explicit — never allow 'none' algorithm
+            options={
+                'require': ['user_id', 'exp', 'role'],  # all 3 must be present
+                'verify_exp': True
+            }
+        )
     except jwt.ExpiredSignatureError:
-        return error('Token has expired', 401)
+        abort(401, 'Token has expired. Please log in again.')
     except jwt.InvalidTokenError:
-        return error('Invalid token', 401)
+        abort(401, 'Invalid token')
+    
+    user_id = payload.get('user_id')
+    if not user_id or not isinstance(user_id, str):
+        abort(401, 'Malformed token payload')
+    
+    return user_id
 
 
 def verify_admin(request):
-    """Verify admin JWT token from request cookies and return admin_id
+    """
+    Verify admin JWT token and check admin role.
+    - Calls verify_token() for core JWT validation
+    - Additionally checks role == 'admin'
+    
     Args:
         request: Flask request object
+    
     Returns:
-        str: admin_id if successful
-        Flask response: error response if failed (401 unauthorized, 403 forbidden)
+        str: user_id if successful and user is admin
+        Raises: abort(401) if not authenticated, abort(403) if not admin
     """
-    token = request.cookies.get('bmf_admin_token')
-    
-    # Fallback to Authorization header if no cookie
-    if not token:
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-    
-    if not token:
-        return error('Admin authentication required', 401)
+    user_id = verify_token(request)
     
     try:
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.split()[1]
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        user_id = payload['user_id']
-        role = payload.get('role', 'user')
-        
-        # Check if role is admin
-        if role != 'admin':
-            return error('Forbidden: Admin access only', 403)
-        
-        return user_id
-        
-    except jwt.ExpiredSignatureError:
-        return error('Token has expired', 401)
-    except jwt.InvalidTokenError:
-        return error('Invalid token', 401)
+        role = payload.get('role', '')
+    except Exception:
+        abort(401, 'Invalid token')
+    
+    if role != 'admin':
+        abort(403, 'Admin access required')
+    
+    return user_id
 
 
 def error(message, code=400):
@@ -352,27 +565,26 @@ def health():
 # ============================================================================
 
 @app.route('/api/auth/register', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=900)
 def register():
     """Register a new user"""
     try:
-        data = request.get_json()
+        data = get_safe_body()
         
-        # Extract fields
-        email = data.get('email', '').strip()
+        # Extract and sanitize fields
+        name = sanitize_string(data.get('name', ''), max_length=100)
+        email = sanitize_email(data.get('email', ''))
         password = data.get('password', '')
-        name = data.get('name', '').strip()
         
-        # Validate email format
-        if not email or '@' not in email or '.' not in email.split('@')[1]:
-            return error('Invalid email format', 400)
-        
-        # Validate password (minimum 8 characters)
-        if not password or len(password) < 8:
-            return error('Password must be at least 8 characters', 400)
-        
-        # Validate name
+        # Validate inputs
         if not name:
             return error('Name is required', 400)
+        if not email:
+            return error('Invalid email address', 400)
+        if not password or len(password) < 8:
+            return error('Password must be at least 8 characters', 400)
+        if len(password) > 128:
+            return error('Password too long', 400)
         
         # Check if email already exists
         existing_user = users_collection.find_one({'email': email.lower()})
@@ -425,21 +637,22 @@ def register():
 
 
 @app.route('/api/auth/login', methods=['POST'])
+@rate_limit(max_requests=10, window_seconds=900)
 def login():
     """Login existing user"""
     try:
-        data = request.get_json()
+        data = get_safe_body()
         
-        # Extract fields
-        email = data.get('email', '').strip()
+        # Extract and sanitize fields
+        email = sanitize_email(data.get('email', ''))
         password = data.get('password', '')
         
         # Validate input
         if not email or not password:
-            return error('Email and password are required', 400)
+            return error('Email and password required', 400)
         
         # Find user by email
-        user = users_collection.find_one({'email': email.lower()})
+        user = users_collection.find_one({'email': email})
         if not user:
             return error('User not found', 404)
         
@@ -502,8 +715,7 @@ def get_current_user():
             return error('Invalid authorization header format', 401)
         
         # Fetch user from database
-        from bson import ObjectId
-        user = users_collection.find_one({'_id': ObjectId(user_id)})
+        user = users_collection.find_one({'_id': safe_object_id(user_id)})
         
         if not user:
             return error('User not found', 404)
@@ -546,13 +758,14 @@ def logout():
 # ============================================================================
 
 @app.route('/api/admin/login', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=900)
 def admin_login():
     """Admin login (searches users collection with role='admin')"""
     try:
-        data = request.get_json()
+        data = get_safe_body()
         
-        # Extract fields
-        email = data.get('email', '').strip()
+        # Extract and sanitize fields
+        email = sanitize_email(data.get('email', ''))
         password = data.get('password', '')
         
         # Validate input
@@ -561,7 +774,7 @@ def admin_login():
         
         # Find admin by email AND role='admin' in users collection
         admin = users_collection.find_one({
-            'email': email.lower(),
+            'email': email,
             'role': 'admin'
         })
         
@@ -618,8 +831,7 @@ def get_current_admin():
         admin_id = result
         
         # Fetch admin from database
-        from bson import ObjectId
-        admin = users_collection.find_one({'_id': ObjectId(admin_id)})
+        admin = users_collection.find_one({'_id': safe_object_id(admin_id)})
         
         if not admin:
             return error('Admin not found', 404)
@@ -673,10 +885,10 @@ def admin_get_complaints():
         # Get query parameters
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 20))
-        status = request.args.get('status', '').strip()
-        issue_type = request.args.get('issue_type', '').strip()
-        ward = request.args.get('ward', '').strip()
-        search = request.args.get('search', '').strip()
+        status = safe_mongo_string(request.args.get('status', ''))
+        issue_type = safe_mongo_string(request.args.get('issue_type', ''))
+        ward = safe_mongo_string(request.args.get('ward', ''))
+        search = safe_mongo_string(request.args.get('search', ''))
         
         # Build filter dynamically
         filter_dict = {}
@@ -701,11 +913,10 @@ def admin_get_complaints():
         complaints_cursor = complaints_collection.find(filter_dict).sort('created_at', -1).skip(skip).limit(limit)
         
         # Fetch complaints and join user info
-        from bson import ObjectId
         complaints_list = []
         for complaint in complaints_cursor:
             # Fetch user info
-            user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])})
+            user = users_collection.find_one({'_id': safe_object_id(str(complaint['user_id']))})
             
             # Build complaint dict with user info
             complaint_dict = {
@@ -750,18 +961,14 @@ def admin_get_complaint(complaint_id):
         if isinstance(result, tuple):
             return result
         
-        # Find complaint
-        from bson import ObjectId
-        try:
-            complaint = complaints_collection.find_one({'_id': ObjectId(complaint_id)})
-        except:
-            return error('Invalid complaint ID format', 400)
+        # Find complaint - safe_object_id already handles exceptions
+        complaint = complaints_collection.find_one({'_id': safe_object_id(complaint_id)})
         
         if not complaint:
             return error('Complaint not found', 404)
         
         # Fetch user info
-        user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])})
+        user = users_collection.find_one({'_id': safe_object_id(str(complaint['user_id']))})
         
         # Build response with user info
         complaint_dict = {
@@ -809,18 +1016,14 @@ def admin_update_complaint_status(complaint_id):
             return error(f'Invalid status. Must be one of: {", ".join(valid_statuses)}', 400)
         
         # Update complaint
-        from bson import ObjectId
-        try:
-            updated_at = datetime.utcnow()
-            result = complaints_collection.update_one(
-                {'_id': ObjectId(complaint_id)},
-                {'$set': {
-                    'status': new_status,
-                    'updated_at': updated_at
-                }}
-            )
-        except:
-            return error('Invalid complaint ID format', 400)
+        updated_at = datetime.utcnow()
+        result = complaints_collection.update_one(
+            {'_id': safe_object_id(complaint_id)},
+            {'$set': {
+                'status': new_status,
+                'updated_at': updated_at
+            }}
+        )
         
         if result.matched_count == 0:
             return error('Complaint not found', 404)
@@ -895,9 +1098,144 @@ def admin_get_stats():
 # IMAGE ANALYSIS ROUTE
 # ============================================================================
 
+def analyze_image_with_fallback(image_url: str) -> dict:
+    """
+    Tries Gemini models in order (each has its own RPD quota).
+    If all 3 Gemini models hit their daily limit, falls back to Groq vision.
+    Returns structured dict always — never raises to the route.
+    """
+
+    VISION_PROMPT = """You are a civic issue classifier for Mumbai's BMC.
+Analyze the image and return ONLY valid JSON with this exact structure:
+{
+  "issue_type": "<one of: Pothole, Garbage/Waste, Water Leakage, Broken Streetlight, Damaged Footpath, Open Drain, Illegal Construction, Other>",
+  "severity": "<one of: Low, Medium, High, Critical>",
+  "description": "<2-3 sentence factual description of what you see>",
+  "department": "<one of: Roads Department, Solid Waste Management, Water Supply, Street Lighting, Storm Water Drain, Building Proposal, General>",
+  "confidence": <integer 0-100>
+}
+Return only the JSON. No markdown, no explanation. If not a civic issue, set issue_type to Other."""
+
+    DEFAULT_RESULT = {
+        'issue_type': 'Other',
+        'severity': 'Medium',
+        'description': 'Image could not be analyzed automatically. Please describe the issue manually.',
+        'department': 'General',
+        'confidence': 0,
+        'model_used': 'none'
+    }
+
+    def parse_json_response(raw_text: str) -> dict:
+        """Strip markdown fences and parse JSON safely."""
+        text = raw_text.strip()
+        if text.startswith('```'):
+            parts = text.split('```')
+            text = parts[1] if len(parts) > 1 else text
+            if text.startswith('json'):
+                text = text[4:]
+        return json.loads(text.strip())
+
+    # ── Try Gemini models ──────────────────────────────────────
+    import urllib.request, io
+    import PIL.Image
+
+    for config in GEMINI_CONFIGS:
+        if not config['api_key']:
+            continue
+        try:
+            genai.configure(api_key=config['api_key'])
+            model = genai.GenerativeModel(config['model'])
+
+            with urllib.request.urlopen(image_url, timeout=10) as resp:
+                image = PIL.Image.open(io.BytesIO(resp.read()))
+
+            response = model.generate_content(
+                [VISION_PROMPT, image],
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=512
+                )
+            )
+
+            result = parse_json_response(response.text)
+            result['model_used'] = config['label']
+            print(f"[AI] Success with {config['label']}")
+            return result
+
+        except json.JSONDecodeError:
+            # Model responded but garbled JSON — return default, don't try next
+            DEFAULT_RESULT['model_used'] = f"{config['label']}:json_error"
+            return DEFAULT_RESULT
+
+        except Exception as e:
+            err = str(e).lower()
+            is_quota_error = any(x in err for x in [
+                '429', 'quota', 'rate_limit', 'resource_exhausted',
+                'too many', 'daily limit', 'exceeded'
+            ])
+            if is_quota_error:
+                print(f"[AI Fallback] {config['label']} quota hit, trying next...")
+                continue
+            else:
+                # Non-quota error (network, auth, etc) — also try next
+                print(f"[AI Fallback] {config['label']} error: {e}, trying next...")
+                continue
+
+    # ── All Gemini models exhausted → try Groq vision ─────────
+    if GROQ_API_KEY:
+        try:
+            import base64, urllib.request
+
+            with urllib.request.urlopen(image_url, timeout=10) as resp:
+                image_b64 = base64.b64encode(resp.read()).decode('utf-8')
+
+            # Detect extension from Cloudinary URL for media_type
+            ext = image_url.split('.')[-1].lower().split('?')[0]
+            media_type_map = {'jpg': 'jpeg', 'jpeg': 'jpeg', 'png': 'png', 'webp': 'webp'}
+            media_type = f"image/{media_type_map.get(ext, 'jpeg')}"
+
+            groq_response = groq_client.chat.completions.create(
+                model='meta-llama/llama-4-scout-17b-16e-instruct',
+                messages=[{
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'image_url',
+                            'image_url': {
+                                'url': f"data:{media_type};base64,{image_b64}"
+                            }
+                        },
+                        {
+                            'type': 'text',
+                            'text': VISION_PROMPT
+                        }
+                    ]
+                }],
+                max_tokens=512,
+                temperature=0.1
+            )
+
+            raw = groq_response.choices[0].message.content
+            result = parse_json_response(raw)
+            result['model_used'] = 'groq:llama-4-scout'
+            print("[AI] Success with Groq fallback")
+            return result
+
+        except json.JSONDecodeError:
+            DEFAULT_RESULT['model_used'] = 'groq:json_error'
+            return DEFAULT_RESULT
+        except Exception as e:
+            print(f"[AI Fallback] Groq also failed: {e}")
+
+    # ── All options failed ─────────────────────────────────────
+    print("[AI] All models exhausted, returning default")
+    return DEFAULT_RESULT
+
+
 @app.route('/api/analyze-image', methods=['POST'])
+@rate_limit(max_requests=20, window_seconds=3600)
 def analyze_image():
-    """Analyze civic issue image using Gemini AI"""
+    """Analyze civic issue image using Gemini AI with fallback chain"""
     try:
         # Authenticate user
         auth_header = request.headers.get('Authorization')
@@ -916,21 +1254,11 @@ def analyze_image():
         except IndexError:
             return error('Invalid authorization header format', 401)
         
-        # Validate file exists
-        if 'image' not in request.files:
-            return error('No image file provided', 400)
-        
-        file = request.files['image']
-        
-        if file.filename == '':
-            return error('No file selected', 400)
-        
-        # Validate file type
-        allowed_extensions = {'jpg', 'jpeg', 'png', 'webp'}
-        file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
-        
-        if file_ext not in allowed_extensions:
-            return error('Invalid file type. Only jpg, jpeg, png, webp allowed', 400)
+        # Validate file with security checks
+        file = request.files.get('image')
+        is_valid, err_msg = validate_upload(file)
+        if not is_valid:
+            return error(err_msg, 400)
         
         # Upload image to Cloudinary
         try:
@@ -942,113 +1270,33 @@ def analyze_image():
         except Exception as e:
             return error(f'Image upload failed: {str(e)}', 500)
         
-        # Analyze image with Gemini AI
+        # Analyze image with fallback chain
         try:
-            print(f"🔍 Starting Gemini analysis for image: {image_url}")
+            print(f"🔍 Starting image analysis for: {image_url}")
+            analysis = analyze_image_with_fallback(image_url)
             
-            system_prompt = """You are a civic issue classifier for Mumbai's BMC (Brihanmumbai Municipal Corporation).
-Analyze the image and return ONLY valid JSON with this exact structure:
-{
-  "issue_type": "<one of: Pothole, Garbage/Waste, Water Leakage, Broken Streetlight, Damaged Footpath, Open Drain, Illegal Construction, Other>",
-  "severity": "<one of: Low, Medium, High, Critical>",
-  "description": "<2-3 sentence factual description of what you see>",
-  "department": "<one of: Roads Department, Solid Waste Management, Water Supply, Street Lighting, Storm Water Drain, Building Proposal, General>",
-  "confidence": <number 0-100>
-}
-Do not include any text outside the JSON. If not a civic issue, set issue_type to Other."""
-            
-            # Download image from Cloudinary URL to send to Gemini
-            import requests
-            print(f"📥 Downloading image from Cloudinary...")
-            image_response = requests.get(image_url)
-            image_data = image_response.content
-            print(f"✅ Image downloaded: {len(image_data)} bytes")
-            
-            # Determine mime type
-            mime_type = 'image/jpeg'
-            if file_ext == 'png':
-                mime_type = 'image/png'
-            elif file_ext == 'webp':
-                mime_type = 'image/webp'
-            
-            # Generate content with Gemini using image bytes
-            import PIL.Image
-            import io
-            import base64
-            
-            print(f"🖼️ Converting to PIL Image...")
-            img = PIL.Image.open(io.BytesIO(image_data))
-            print(f"✅ PIL Image created: {img.size}, mode: {img.mode}")
-            
-            # Convert image to base64 for Gemini REST API
-            buffer = io.BytesIO()
-            img.save(buffer, format='JPEG')
-            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            print(f"🤖 Calling Gemini API via REST...")
-            
-            # Call Gemini REST API directly
-            gemini_payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": system_prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": image_base64
-                            }
-                        }
-                    ]
-                }]
-            }
-            
-            gemini_response = requests.post(
-                GEMINI_API_URL,
-                json=gemini_payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
-            if gemini_response.status_code != 200:
-                raise Exception(f"Gemini API error: {gemini_response.status_code} - {gemini_response.text}")
-            
-            gemini_data = gemini_response.json()
-            gemini_text = gemini_data['candidates'][0]['content']['parts'][0]['text'].strip()
-            
-            print(f"✅ Gemini response received: {len(gemini_text)} chars")
-            print(f"📄 Gemini raw response: {gemini_text[:200]}...")
-            
-            # Parse JSON (remove markdown code blocks if present)
-            if gemini_text.startswith('```'):
-                # Remove ```json and ``` markers
-                gemini_text = gemini_text.replace('```json', '').replace('```', '').strip()
-            
-            analysis_data = json.loads(gemini_text)
-            
-            # Return analysis result
+            # Return analysis result with model info
             return success({
                 'image_url': image_url,
-                'issue_type': analysis_data.get('issue_type', 'Other'),
-                'severity': analysis_data.get('severity', 'Medium'),
-                'description': analysis_data.get('description', 'Civic issue detected'),
-                'department': analysis_data.get('department', 'General'),
-                'confidence': analysis_data.get('confidence', 0)
+                'issue_type': analysis.get('issue_type', 'Other'),
+                'severity': analysis.get('severity', 'Medium'),
+                'description': analysis.get('description', 'Civic issue detected'),
+                'department': analysis.get('department', 'General'),
+                'confidence': analysis.get('confidence', 0),
+                'model_used': analysis.get('model_used', 'unknown')
             }, 200)
             
         except Exception as e:
-            # Gemini analysis failed - log error and return default values
-            print(f"❌ GEMINI ERROR: {str(e)}")
-            print(f"Error type: {type(e).__name__}")
-            import traceback
-            traceback.print_exc()
-            
+            print(f"❌ Analysis error: {str(e)}")
+            # Return default result on any error
             return success({
                 'image_url': image_url,
                 'issue_type': 'Other',
                 'severity': 'Medium',
                 'description': f'Unable to analyze image: {str(e)}',
                 'department': 'General',
-                'confidence': 0
+                'confidence': 0,
+                'model_used': 'error'
             }, 200)
         
     except Exception as e:
@@ -1060,6 +1308,7 @@ Do not include any text outside the JSON. If not a civic issue, set issue_type t
 # ============================================================================
 
 @app.route('/api/complaints', methods=['POST'])
+@rate_limit(max_requests=30, window_seconds=3600)
 def create_complaint():
     """Create a new complaint with Groq-generated formal text"""
     try:
@@ -1080,16 +1329,18 @@ def create_complaint():
         except IndexError:
             return error('Invalid authorization header format', 401)
         
-        # Get request data
-        data = request.get_json()
+        # Get request data safely
+        data = get_safe_body()
         
         # Validate required fields
         image_url = data.get('image_url', '').strip()
         issue_type = data.get('issue_type', '').strip()
-        location = data.get('location', '').strip()
+        location = sanitize_string(data.get('location', ''), max_length=300)
         
         if not image_url:
             return error('image_url is required', 400)
+        if not image_url.startswith('https://res.cloudinary.com/'):
+            return error('Invalid image URL', 400)
         if not issue_type:
             return error('issue_type is required', 400)
         if not location:
@@ -1099,7 +1350,7 @@ def create_complaint():
         severity = data.get('severity', 'Medium')
         description = data.get('description', '')
         department = data.get('department', 'General')
-        ward_number = data.get('ward_number', 'N/A')
+        ward_number = sanitize_string(data.get('ward_number', 'N/A'), max_length=20)
         latitude = data.get('latitude')
         longitude = data.get('longitude')
         
@@ -1151,10 +1402,8 @@ Regards,
 A Concerned Citizen of Mumbai"""
         
         # Build complaint document
-        from bson import ObjectId
-        
         complaint_doc = {
-            'user_id': ObjectId(user_id),
+            'user_id': safe_object_id(user_id),
             'image_url': image_url,
             'issue_type': issue_type,
             'severity': severity,
@@ -1215,9 +1464,7 @@ def get_complaints():
         skip = (page - 1) * limit
         
         # Find complaints for this user
-        from bson import ObjectId
-        
-        query = {'user_id': ObjectId(user_id)}
+        query = {'user_id': safe_object_id(user_id)}
         total = complaints_collection.count_documents(query)
         
         complaints_cursor = complaints_collection.find(query).sort('created_at', -1).skip(skip).limit(limit)
@@ -1264,11 +1511,9 @@ def get_complaint(complaint_id):
             return error('Invalid authorization header format', 401)
         
         # Find complaint by ID and user_id (security check)
-        from bson import ObjectId
-        
         complaint = complaints_collection.find_one({
-            '_id': ObjectId(complaint_id),
-            'user_id': ObjectId(user_id)
+            '_id': safe_object_id(complaint_id),
+            'user_id': safe_object_id(user_id)
         })
         
         if not complaint:
@@ -1317,12 +1562,10 @@ def update_complaint_status(complaint_id):
             return error(f'Invalid status. Must be one of: {", ".join(valid_statuses)}', 400)
         
         # Update complaint
-        from bson import ObjectId
-        
         result = complaints_collection.update_one(
             {
-                '_id': ObjectId(complaint_id),
-                'user_id': ObjectId(user_id)
+                '_id': safe_object_id(complaint_id),
+                'user_id': safe_object_id(user_id)
             },
             {
                 '$set': {
@@ -1337,8 +1580,8 @@ def update_complaint_status(complaint_id):
         
         # Fetch and return updated complaint
         complaint = complaints_collection.find_one({
-            '_id': ObjectId(complaint_id),
-            'user_id': ObjectId(user_id)
+            '_id': safe_object_id(complaint_id),
+            'user_id': safe_object_id(user_id)
         })
         
         complaint['_id'] = str(complaint['_id'])
@@ -1357,20 +1600,12 @@ def update_complaint_status(complaint_id):
 # ============================================================================
 
 @app.route('/api/feed', methods=['GET'])
+@rate_limit(max_requests=60, window_seconds=60)
 def get_community_feed():
     """Get community feed of all complaints (paginated)"""
     try:
-        # Verify user token
-        result = verify_token(request)
-        if isinstance(result, tuple) and len(result) == 2:
-            # Check if this is an error response (Flask response object) or success (strings)
-            if hasattr(result[0], 'status_code'):  # Flask response object
-                return result
-            else:
-                # Success - tuple contains (user_id, role)
-                user_id, role = result
-        else:
-            return error('Authentication failed', 401)
+        # Verify user token - now returns user_id directly, or aborts on error
+        user_id = verify_token(request)
         
         # Get pagination parameters
         page = int(request.args.get('page', 1))
@@ -1396,13 +1631,12 @@ def get_community_feed():
         complaints_cursor = complaints_collection.find({}).sort('created_at', -1).skip(skip).limit(limit)
         
         # Build feed posts with user names
-        from bson import ObjectId
         posts = []
         
         for complaint in complaints_cursor:
             try:
                 # Fetch citizen name from users collection
-                user = users_collection.find_one({'_id': ObjectId(complaint['user_id'])}, {'name': 1})
+                user = users_collection.find_one({'_id': safe_object_id(str(complaint['user_id']))}, {'name': 1})
                 citizen_name = user['name'] if user else 'Anonymous'
                 
                 # Build lean post object
@@ -1528,6 +1762,51 @@ def setup_database_indexes():
 
 # Initialize database indexes on startup
 setup_database_indexes()
+
+
+# ============================================================================
+# GLOBAL ERROR HANDLERS
+# ============================================================================
+
+@app.errorhandler(400)
+def bad_request(e):
+    return jsonify({'error': str(e.description) if e.description else 'Bad request'}), 400
+
+@app.errorhandler(401)
+def unauthorized(e):
+    return jsonify({'error': str(e.description) if e.description else 'Unauthorized'}), 401
+
+@app.errorhandler(403)
+def forbidden(e):
+    return jsonify({'error': str(e.description) if e.description else 'Forbidden'}), 403
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({'error': 'Resource not found'}), 404
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({'error': 'Method not allowed'}), 405
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({'error': 'Request too large'}), 413
+
+@app.errorhandler(429)
+def too_many_requests(e):
+    return jsonify({'error': 'Too many requests. Please slow down.'}), 429
+
+@app.errorhandler(500)
+def internal_error(e):
+    # NEVER send internal error details to client in production
+    print(f"[Internal Error] {e}")  # logs to Render console only
+    return jsonify({'error': 'An internal error occurred. Please try again.'}), 500
+
+@app.errorhandler(Exception)
+def unhandled_exception(e):
+    # Catch any unhandled exception — log it but never expose it
+    print(f"[Unhandled Exception] {type(e).__name__}: {e}")
+    return jsonify({'error': 'An unexpected error occurred.'}), 500
 
 
 # ============================================================================

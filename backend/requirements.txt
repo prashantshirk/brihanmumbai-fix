@@ -4,8 +4,10 @@ pymongo
 python-dotenv
 bcrypt
 PyJWT
+google-generativeai
 groq
 cloudinary
 requests
-Pillow
 gunicorn
+Pillow
+python-magic
