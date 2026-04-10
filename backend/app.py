@@ -42,11 +42,19 @@ app = Flask(__name__)
 # ============================================================================
 # CORS CONFIGURATION
 # ============================================================================
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
-# Configure CORS properly for production
+# Configure CORS to allow both old Vite (5173) and new Next.js (3000) frontends
+# Plus production Vercel URL when deployed
+allowed_origins = [
+    'https://brihanmumbai-fix.vercel.app',  # Production
+    'http://localhost:3000',                 # Next.js dev (primary)
+    'http://localhost:5173',                 # Old Vite dev (for transition safety)
+    FRONTEND_URL,                            # From .env
+]
+
 CORS(app, 
-     origins=['https://brihanmumbai-fix.vercel.app', 'http://localhost:5173', FRONTEND_URL],
+     origins=allowed_origins,
      supports_credentials=True,
      allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
      methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -80,7 +88,7 @@ cloudinary.config(
 # ============================================================================
 # GEMINI AI CONFIG
 # ============================================================================
-import genai
+import google.generativeai as genai
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
@@ -1746,7 +1754,7 @@ def setup_database_indexes():
     try:
         # Users collection indexes
         users_collection.create_index('email', unique=True, name='email_unique_idx')
-        print("✅ Users indexes created: email (unique)")
+        print("[OK] Users indexes created: email (unique)")
         
         # Complaints collection indexes
         complaints_collection.create_index('user_id', name='user_id_idx')
@@ -1755,10 +1763,10 @@ def setup_database_indexes():
             [('user_id', 1), ('status', 1)], 
             name='user_status_compound_idx'
         )
-        print("✅ Complaints indexes created: user_id, created_at (desc), user_id+status (compound)")
+        print("[OK] Complaints indexes created: user_id, created_at (desc), user_id+status (compound)")
         
     except Exception as e:
-        print(f"⚠️  Warning: Could not create indexes: {str(e)}")
+        print(f"[WARN] Could not create indexes: {str(e)}")
 
 # Initialize database indexes on startup
 setup_database_indexes()
