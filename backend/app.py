@@ -468,6 +468,20 @@ def success(data, code=200):
     return jsonify(data), code
 
 
+def get_cookie_security_options(req):
+    """
+    Use secure cookie settings in production, but allow local HTTP development.
+    - localhost / 127.0.0.1: secure=False, SameSite=Lax
+    - production domains: secure=True, SameSite=None
+    """
+    host = (req.host.split(':')[0].lower() if req and req.host else '')
+    is_local = host in ('localhost', '127.0.0.1')
+    return {
+        'secure': not is_local,
+        'samesite': 'None' if not is_local else 'Lax'
+    }
+
+
 # ============================================================================
 # MUMBAI BMC WARD DEPARTMENTS DATA
 # ============================================================================
@@ -674,14 +688,15 @@ def register():
         
         response = make_response(jsonify(response_data), 201)
         
-        # Set secure HTTP-only cookie
+        # Set HTTP-only cookie (secure in production, local-safe in dev)
+        cookie_options = get_cookie_security_options(request)
         response.set_cookie(
             'bmf_token',
             token,
             max_age=7*24*60*60,  # 7 days in seconds
             httponly=True,
-            secure=True,  # Always secure in production (HTTPS)
-            samesite='None'  # Allow cross-site cookies for production
+            secure=cookie_options['secure'],
+            samesite=cookie_options['samesite']
         )
         
         return response
@@ -730,14 +745,15 @@ def login():
         
         response = make_response(jsonify(response_data), 200)
         
-        # Set secure HTTP-only cookie
+        # Set HTTP-only cookie (secure in production, local-safe in dev)
+        cookie_options = get_cookie_security_options(request)
         response.set_cookie(
             'bmf_token',
             token,
             max_age=7*24*60*60,  # 7 days in seconds
             httponly=True,
-            secure=True,  # Always secure in production (HTTPS)
-            samesite='None'  # Allow cross-site cookies for production
+            secure=cookie_options['secure'],
+            samesite=cookie_options['samesite']
         )
         
         return response
@@ -772,14 +788,15 @@ def logout():
         'message': 'Logged out successfully'
     }), 200)
     
-    # Clear the authentication cookie
+    # Clear the authentication cookie (match active cookie policy)
+    cookie_options = get_cookie_security_options(request)
     response.set_cookie(
         'bmf_token',
         '',
         max_age=0,
         httponly=True,
-        secure=True,
-        samesite='None'
+        secure=cookie_options['secure'],
+        samesite=cookie_options['samesite']
     )
     
     return response
@@ -833,14 +850,15 @@ def admin_login():
         
         response = make_response(jsonify(response_data), 200)
         
-        # Set secure HTTP-only cookie for admin
+        # Set HTTP-only cookie for admin (secure in production, local-safe in dev)
+        cookie_options = get_cookie_security_options(request)
         response.set_cookie(
             'bmf_admin_token',
             token,
             max_age=7*24*60*60,  # 7 days in seconds
             httponly=True,
-            secure=True,  # Always secure in production (HTTPS)
-            samesite='None'  # Allow cross-site cookies for production
+            secure=cookie_options['secure'],
+            samesite=cookie_options['samesite']
         )
         
         return response
@@ -888,14 +906,15 @@ def admin_logout():
         'message': 'Admin logged out successfully'
     }), 200)
     
-    # Clear the admin authentication cookie
+    # Clear the admin authentication cookie (match active cookie policy)
+    cookie_options = get_cookie_security_options(request)
     response.set_cookie(
         'bmf_admin_token',
         '',
         max_age=0,
         httponly=True,
-        secure=True,
-        samesite='None'
+        secure=cookie_options['secure'],
+        samesite=cookie_options['samesite']
     )
     
     return response
