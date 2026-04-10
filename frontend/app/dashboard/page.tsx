@@ -397,10 +397,10 @@ export default function DashboardPage() {
 
       {/* Complaint Detail Dialog */}
       <Dialog open={!!complaint} onOpenChange={() => setSelectedComplaint(null)}>
-        <DialogContent className="w-[92vw] sm:!max-w-xl !max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+        <DialogContent className="w-[92vw] sm:max-w-lg h-[85vh] max-h-[85vh] flex flex-col overflow-hidden p-0">
           {complaint && (
             <>
-              <DialogHeader>
+              <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
                 <DialogTitle className="flex items-center gap-2">
                   {complaint.issueType}
                   <Badge className={getSeverityColor(complaint.severity)}>
@@ -412,13 +412,13 @@ export default function DashboardPage() {
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-6 min-h-0 overflow-y-auto pr-2">
+              <div className="space-y-6 min-h-0 overflow-y-auto px-6 pb-6">
                 {/* Image */}
                 <div className="rounded-lg">
                   <img
                     src={complaint.image_url || complaint.imageUrl}
                     alt={complaint.issue_type || "Complaint image"}
-                    className="w-full h-48 object-cover rounded-lg"
+                    className="w-full h-44 object-cover rounded-lg"
                     loading="lazy"
                     onError={(e) => {
                       const target = e.currentTarget;
@@ -427,7 +427,7 @@ export default function DashboardPage() {
                       if (parent && !parent.querySelector(".img-fallback")) {
                         const fallback = document.createElement("div");
                         fallback.className =
-                          "img-fallback w-full h-48 bg-muted rounded-lg flex items-center justify-center text-muted-foreground text-sm";
+                          "img-fallback w-full h-44 bg-muted rounded-lg flex items-center justify-center text-muted-foreground text-sm";
                         fallback.textContent = complaint.issue_type || "Image unavailable";
                         parent.appendChild(fallback);
                       }
