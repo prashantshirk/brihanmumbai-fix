@@ -1,4 +1,11 @@
-import { saveUserSession, saveAdminSession } from '@/lib/auth'
+import {
+  saveUserSession,
+  saveAdminSession,
+  setUserMiddlewareCookie,
+  setAdminMiddlewareCookie,
+  clearUserMiddlewareCookie,
+  clearAdminMiddlewareCookie,
+} from '@/lib/auth'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
 
@@ -87,6 +94,7 @@ async function apiFetch<T>(
     // Clear any stale session info
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('bmf_user_info')
+      clearUserMiddlewareCookie()
       window.location.href = '/login'
     }
     throw new Error('Unauthorized')
@@ -95,6 +103,7 @@ async function apiFetch<T>(
   if (res.status === 403) {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('bmf_admin_info')
+      clearAdminMiddlewareCookie()
       window.location.href = '/admin/login'
     }
     throw new Error('Forbidden')
@@ -118,6 +127,7 @@ export const authAPI = {
     })
     // Flask set httpOnly cookie. Save user info (not token) for UI.
     saveUserSession(data.user)
+    if (data.token) setUserMiddlewareCookie(data.token)
     return data
   },
 
@@ -127,6 +137,7 @@ export const authAPI = {
       body: JSON.stringify({ email, password }),
     })
     saveUserSession(data.user)
+    if (data.token) setUserMiddlewareCookie(data.token)
     return data
   },
 
@@ -195,6 +206,7 @@ export const adminAPI = {
       body: JSON.stringify({ email, password }),
     })
     saveAdminSession(data.admin)
+    if (data.token) setAdminMiddlewareCookie(data.token)
     return data
   },
 

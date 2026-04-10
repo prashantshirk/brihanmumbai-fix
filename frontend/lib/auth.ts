@@ -20,6 +20,34 @@ export interface StoredUser {
 const USER_INFO_KEY = 'bmf_user_info'
 const ADMIN_INFO_KEY = 'bmf_admin_info'
 
+function secureCookieSuffix(): string {
+  if (typeof window === 'undefined') return ''
+  return window.location.protocol === 'https:' ? '; Secure' : ''
+}
+
+// Frontend-domain cookies used by Next middleware for route gating when
+// backend runs on a different domain (e.g., Render). Backend still owns
+// auth verification for protected API calls.
+export function setUserMiddlewareCookie(token: string): void {
+  if (typeof window === 'undefined' || !token) return
+  document.cookie = `bmf_token=${encodeURIComponent(token)}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax${secureCookieSuffix()}`
+}
+
+export function setAdminMiddlewareCookie(token: string): void {
+  if (typeof window === 'undefined' || !token) return
+  document.cookie = `bmf_admin_token=${encodeURIComponent(token)}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax${secureCookieSuffix()}`
+}
+
+export function clearUserMiddlewareCookie(): void {
+  if (typeof window === 'undefined') return
+  document.cookie = `bmf_token=; path=/; max-age=0; SameSite=Lax${secureCookieSuffix()}`
+}
+
+export function clearAdminMiddlewareCookie(): void {
+  if (typeof window === 'undefined') return
+  document.cookie = `bmf_admin_token=; path=/; max-age=0; SameSite=Lax${secureCookieSuffix()}`
+}
+
 // ── Save user info after login ─────────────────────────────────────────────
 // Called after successful login. Flask already set the httpOnly cookie.
 // We only store non-sensitive info in sessionStorage for UI purposes.
@@ -74,6 +102,7 @@ export function hasAdminSession(): boolean {
 export async function logout(): Promise<void> {
   if (typeof window === 'undefined') return
   sessionStorage.removeItem(USER_INFO_KEY)
+  clearUserMiddlewareCookie()
   try {
     await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/api/auth/logout`,
@@ -88,6 +117,7 @@ export async function logout(): Promise<void> {
 export async function logoutAdmin(): Promise<void> {
   if (typeof window === 'undefined') return
   sessionStorage.removeItem(ADMIN_INFO_KEY)
+  clearAdminMiddlewareCookie()
   try {
     await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/api/admin/logout`,
