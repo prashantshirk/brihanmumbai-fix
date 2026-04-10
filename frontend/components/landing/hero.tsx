@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Camera, MapPin, CheckCircle2 } from "lucide-react";
@@ -62,16 +61,10 @@ export function Hero() {
             <div className="relative bg-card rounded-2xl border shadow-xl overflow-hidden">
               {/* Mock Phone Frame */}
               <div className="bg-muted rounded-xl aspect-[3/4] overflow-hidden relative">
-                {/* Pothole Image Background */}
-                <Image
-                  src="/images/pothole-road-india.jpg"
-                  alt="Pothole on Indian highway"
-                  fill
-                  className="object-cover"
-                  priority
-                />
+                {/* Background Gradient (no image - image upload optional) */}
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-primary/10 to-accent/20" />
                 
-                {/* Gradient Overlay */}
+                {/* Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-b from-primary/10 to-accent/10" />
                 
                 {/* Mock UI Elements */}
