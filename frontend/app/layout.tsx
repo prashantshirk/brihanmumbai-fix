@@ -6,9 +6,12 @@ export const metadata: Metadata = {
   title: "BrihanMumbai Fix - Report Civic Issues in Mumbai",
   description: "AI-powered civic issue reporting platform for Mumbai citizens. Report potholes, garbage, water issues, and more. Track resolution in real-time.",
   icons: {
-    icon: "/favicon.ico",
-    shortcut: "/favicon.ico",
-    apple: "/images/logosmall.png",
+    icon: [
+      { url: "/images/favicon-32x32.png?v=2", type: "image/png", sizes: "32x32" },
+      { url: "/favicon.ico?v=2", sizes: "any" },
+    ],
+    shortcut: "/favicon.ico?v=2",
+    apple: "/apple-icon.png?v=2",
   },
 };
 
