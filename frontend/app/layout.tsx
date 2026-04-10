@@ -5,6 +5,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "BrihanMumbai Fix - Report Civic Issues in Mumbai",
   description: "AI-powered civic issue reporting platform for Mumbai citizens. Report potholes, garbage, water issues, and more. Track resolution in real-time.",
+  icons: {
+    icon: "/images/logosmall.png",
+    shortcut: "/images/logosmall.png",
+    apple: "/images/logosmall.png",
+  },
 };
 
 const _montserrat = Montserrat({ subsets: ["latin"] });
