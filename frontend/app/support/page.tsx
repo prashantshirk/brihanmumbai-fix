@@ -28,7 +28,7 @@ export default function SupportPage() {
                 <Mail className="h-5 w-5 text-primary" />
                 <div>
                   <p className="font-medium">Email Support</p>
-                  <p className="text-sm text-muted-foreground">support@brihanmumbaifix.in</p>
+                  <p className="text-sm text-muted-foreground">prashantshirke9324@gmail.com</p>
                 </div>
               </Link>
 
