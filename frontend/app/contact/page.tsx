@@ -7,25 +7,25 @@ import { Mail, Github, Linkedin, Instagram } from "lucide-react";
 const contacts = [
   {
     label: "Email",
-    value: "contact@brihanmumbaifix.in",
-    href: "mailto:contact@brihanmumbaifix.in",
+    value: "prashantshirke9324@gmail.com",
+    href: "mailto:prashantshirke9324@gmail.com",
     icon: Mail,
   },
   {
     label: "GitHub",
     value: "github.com/prashantshirk/brihanmumbai-fix",
-    href: "https://github.com/prashantshirk/brihanmumbai-fix",
+    href: "https://github.com/prashantshirk",
     icon: Github,
   },
   {
     label: "LinkedIn",
-    value: "linkedin.com/company/brihanmumbaifix",
-    href: "https://www.linkedin.com",
+    value: "linkedin.com/in/prashantshirke",
+    href: "https://www.linkedin.com/in/prashantshirkee",
     icon: Linkedin,
   },
   {
     label: "Instagram",
-    value: "@brihanmumbaifix",
+    value: "@prashantshirke_",
     href: "https://www.instagram.com",
     icon: Instagram,
   },

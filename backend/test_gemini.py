@@ -19,38 +19,53 @@ if not GEMINI_API_KEY:
 print(f"✅ Found API key: {GEMINI_API_KEY[:10]}...")
 print(f"📏 Key length: {len(GEMINI_API_KEY)} characters")
 
-# Updated to latest model: gemini-2.5-flash-lite (gemini-1.5-flash is deprecated)
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
+models_to_test = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+]
+
+
+def build_api_url(model_id: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={GEMINI_API_KEY}"
+
+
+def extract_text(response_json: dict) -> str:
+    try:
+        return response_json['candidates'][0]['content']['parts'][0]['text']
+    except Exception:
+        return str(response_json)
 
 try:
     # Test 1: Simple text prompt
-    print("\n🧪 TEST 1: Simple Text Generation")
+    print("\n🧪 TEST 1: Simple Text Generation (all models)")
     print("=" * 50)
-    print("🤖 Using model: gemini-2.5-flash-lite (latest)")
     
     payload = {
         "contents": [{
             "parts": [{"text": "Say 'Hello, I am working!' in exactly 5 words."}]
         }]
     }
-    
-    print("📤 Sending request to Gemini API...")
-    response = requests.post(API_URL, json=payload, timeout=10)
-    
-    print(f"📥 Response status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        text = data['candidates'][0]['content']['parts'][0]['text']
-        print(f"✅ Gemini response: {text}")
-        print("\n✅✅✅ TEST 1 PASSED! Gemini API is working!")
-    else:
-        print(f"❌ Error: {response.status_code}")
-        print(f"Response: {response.text}")
-        exit(1)
+
+    text_success_models = []
+    for model_id in models_to_test:
+        print(f"\n🤖 Testing model: {model_id}")
+        try:
+            response = requests.post(build_api_url(model_id), json=payload, timeout=10)
+            print(f"📥 Response status: {response.status_code}")
+            if response.status_code == 200:
+                text = extract_text(response.json())
+                print(f"✅ Text response: {text}")
+                text_success_models.append(model_id)
+            else:
+                print(f"❌ Error body: {response.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Request failed: {type(e).__name__}: {e}")
     
     # Test 2: Image analysis
-    print("\n🧪 TEST 2: Image Analysis (Civic Issue)")
+    print("\n🧪 TEST 2: Image Analysis (all models)")
     print("=" * 50)
     
     # Ask user for a local image file
@@ -59,8 +74,8 @@ try:
     image_path = input("Enter full path to image file (or press Enter to skip): ").strip()
     
     if not image_path:
-        print("⏭️ Skipping image test (you can deploy without this test)")
-        print("\n✅ API key is valid - you can deploy to Render now!")
+        print("⏭️ Skipping image test.")
+        print(f"\n✅ Text-test successful models: {text_success_models if text_success_models else 'None'}")
         exit(0)
     
     # Remove quotes if user copied path with quotes
@@ -113,23 +128,26 @@ Do not include any text outside the JSON."""
             ]
         }]
     }
-    
-    print("📤 Sending image to Gemini for analysis...")
-    vision_response = requests.post(API_URL, json=vision_payload, timeout=30)
-    
-    print(f"📥 Response status: {vision_response.status_code}")
-    
-    if vision_response.status_code == 200:
-        vision_data = vision_response.json()
-        vision_text = vision_data['candidates'][0]['content']['parts'][0]['text']
-        print(f"✅ Gemini vision response received!")
-        print(f"\n📄 Analysis Result:\n{vision_text}\n")
-        print("✅✅✅ TEST 2 PASSED! Image analysis is working!")
-        print("\n🎉🎉🎉 ALL TESTS PASSED! Your Gemini API is fully functional!")
-    else:
-        print(f"❌ Error: {vision_response.status_code}")
-        print(f"Response: {vision_response.text}")
-        exit(1)
+
+    vision_success_models = []
+    for model_id in models_to_test:
+        print(f"\n🤖 Testing image analysis with model: {model_id}")
+        try:
+            vision_response = requests.post(build_api_url(model_id), json=vision_payload, timeout=30)
+            print(f"📥 Response status: {vision_response.status_code}")
+            if vision_response.status_code == 200:
+                vision_text = extract_text(vision_response.json())
+                print(f"✅ Vision response:\n{vision_text}\n")
+                vision_success_models.append(model_id)
+            else:
+                print(f"❌ Error body: {vision_response.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Request failed: {type(e).__name__}: {e}")
+
+    print("\n📊 SUMMARY")
+    print("=" * 50)
+    print(f"✅ Text-test successful models: {text_success_models if text_success_models else 'None'}")
+    print(f"✅ Vision-test successful models: {vision_success_models if vision_success_models else 'None'}")
     
 except requests.exceptions.Timeout:
     print("\n❌ ERROR: Request timed out")

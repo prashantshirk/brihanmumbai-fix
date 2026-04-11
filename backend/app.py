@@ -100,9 +100,9 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 # gemini-3.1-flash-lite → 500 RPD (best RPD, good vision)
 # groq llama vision     → generous free tier (final fallback)
 GEMINI_CONFIGS = [
-    {'api_key': GEMINI_API_KEY, 'model': 'gemini-2.5-flash',        'label': 'gemini-flash'},
-    {'api_key': GEMINI_API_KEY, 'model': 'gemini-2.5-flash-lite',   'label': 'gemini-flash-lite'},
-    {'api_key': GEMINI_API_KEY, 'model': 'gemini-3.1-flash-lite',  'label': 'gemini-31-flash-lite'},
+    {'api_key': GEMINI_API_KEY, 'model': 'gemini-3.1-flash-lite-preview', 'label': 'gemini-3.1-flash-lite-preview'},
+    {'api_key': GEMINI_API_KEY, 'model': 'gemini-2.5-flash-lite', 'label': 'gemini-2.5-flash-lite'},
+    {'api_key': GEMINI_API_KEY, 'model': 'gemini-2.5-flash', 'label': 'gemini-2.5-flash'},
 ]
 
 # ============================================================================
@@ -1229,14 +1229,33 @@ Return only the JSON. No markdown, no explanation. If not a civic issue, set iss
     }
 
     def parse_json_response(raw_text: str) -> dict:
-        """Strip markdown fences and parse JSON safely."""
-        text = raw_text.strip()
-        if text.startswith('```'):
-            parts = text.split('```')
-            text = parts[1] if len(parts) > 1 else text
-            if text.startswith('json'):
-                text = text[4:]
-        return json.loads(text.strip())
+        """Parse model output JSON from plain text, fenced blocks, or mixed output."""
+        text = (raw_text or '').strip()
+        if not text:
+            raise json.JSONDecodeError('Empty model response', raw_text or '', 0)
+
+        # 1) Prefer fenced ```json ... ``` payloads when present.
+        fenced_match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, flags=re.IGNORECASE | re.DOTALL)
+        if fenced_match:
+            fenced_text = fenced_match.group(1).strip()
+            try:
+                return json.loads(fenced_text)
+            except json.JSONDecodeError:
+                pass
+
+        # 2) Try direct JSON parse.
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 3) Fallback: extract first JSON object from extra prose.
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start:end + 1].strip())
+
+        raise json.JSONDecodeError('No JSON object found in model response', text, 0)
 
     # ── Try Gemini models ──────────────────────────────────────
     import urllib.request, io
@@ -1244,13 +1263,17 @@ Return only the JSON. No markdown, no explanation. If not a civic issue, set iss
 
     for config in GEMINI_CONFIGS:
         if not config['api_key']:
+            print(f"[AI Fallback] Skipping {config['label']}: missing API key")
             continue
+        print(f"[AI] Attempting Gemini model: {config['label']}")
+        response = None
         try:
             genai.configure(api_key=config['api_key'])
             model = genai.GenerativeModel(config['model'])
 
             with urllib.request.urlopen(image_url, timeout=10) as resp:
                 image = PIL.Image.open(io.BytesIO(resp.read()))
+            print(f"[AI] Cloudinary image download succeeded for {config['label']}")
 
             response = model.generate_content(
                 [VISION_PROMPT, image],
@@ -1263,15 +1286,19 @@ Return only the JSON. No markdown, no explanation. If not a civic issue, set iss
             result = parse_json_response(response.text)
             result['model_used'] = config['label']
             print(f"[AI] Success with {config['label']}")
+            print(f"[AI] Final model_used: {result['model_used']}")
             return result
 
-        except json.JSONDecodeError:
-            # Model responded but garbled JSON — return default, don't try next
-            DEFAULT_RESULT['model_used'] = f"{config['label']}:json_error"
-            return DEFAULT_RESULT
+        except json.JSONDecodeError as e:
+            raw_text = response.text if response is not None and getattr(response, 'text', None) else ''
+            print(f"[AI Fallback] {config['label']} JSON decode failed: {type(e).__name__}: {e}")
+            if raw_text:
+                print(f"[AI Fallback] {config['label']} raw response: {raw_text}")
+            continue
 
         except Exception as e:
             err = str(e).lower()
+            print(f"[AI Fallback] {config['label']} exception: {type(e).__name__}: {e}")
             is_quota_error = any(x in err for x in [
                 '429', 'quota', 'rate_limit', 'resource_exhausted',
                 'too many', 'daily limit', 'exceeded'
@@ -1322,16 +1349,17 @@ Return only the JSON. No markdown, no explanation. If not a civic issue, set iss
             result = parse_json_response(raw)
             result['model_used'] = 'groq:llama-4-scout'
             print("[AI] Success with Groq fallback")
+            print(f"[AI] Final model_used: {result['model_used']}")
             return result
 
-        except json.JSONDecodeError:
-            DEFAULT_RESULT['model_used'] = 'groq:json_error'
-            return DEFAULT_RESULT
+        except json.JSONDecodeError as e:
+            print(f"[AI Fallback] Groq JSON decode failed: {type(e).__name__}: {e}")
         except Exception as e:
-            print(f"[AI Fallback] Groq also failed: {e}")
+            print(f"[AI Fallback] Groq also failed: {type(e).__name__}: {e}")
 
     # ── All options failed ─────────────────────────────────────
     print("[AI] All models exhausted, returning default")
+    print(f"[AI] Final model_used: {DEFAULT_RESULT['model_used']}")
     return DEFAULT_RESULT
 
 
