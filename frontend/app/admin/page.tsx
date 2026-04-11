@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { adminAPI, Complaint as ApiComplaint } from "@/lib/api";
+import { getAdmin, logoutAdmin, saveAdminSession } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -119,6 +119,7 @@ export default function AdminDashboardPage() {
     inProgress: 0,
     resolved: 0,
   });
+  const [adminInfo, setAdminInfo] = useState<{ name: string; email: string } | null>(null);
 
   const itemsPerPage = 20;
 
@@ -145,6 +146,16 @@ export default function AdminDashboardPage() {
     setError(null);
 
     try {
+      const cachedAdmin = getAdmin();
+      if (cachedAdmin) {
+        setAdminInfo({ name: cachedAdmin.name, email: cachedAdmin.email });
+      } else {
+        const me = await adminAPI.me();
+        const profile = { name: me.name || "Admin", email: me.email || "" };
+        saveAdminSession({ id: me.id, name: profile.name, email: profile.email });
+        setAdminInfo(profile);
+      }
+
       const [complaintsData, statsData] = await Promise.all([
         adminAPI.getComplaints({ page: 1, limit: 200 }),
         adminAPI.getStats(),
@@ -200,6 +211,10 @@ export default function AdminDashboardPage() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await fetchAdminData(false);
+  };
+
+  const handleLogout = async () => {
+    await logoutAdmin();
   };
 
   const handleStatusUpdate = async (complaintId: string, newStatus: string) => {
@@ -279,18 +294,23 @@ export default function AdminDashboardPage() {
 
               <div className="flex items-center gap-3">
                 <Avatar className="size-9">
-                  <AvatarFallback>AD</AvatarFallback>
+                  <AvatarFallback>
+                    {(adminInfo?.name || "Admin")
+                      .split(" ")
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((part) => part[0]?.toUpperCase())
+                      .join("") || "AD"}
+                  </AvatarFallback>
                 </Avatar>
                 <div className="hidden sm:block">
-                  <p className="text-sm font-medium">Admin User</p>
-                  <p className="text-xs text-muted-foreground">admin@mcgm.gov.in</p>
+                  <p className="text-sm font-medium">{adminInfo?.name || "Admin"}</p>
+                  <p className="text-xs text-muted-foreground">{adminInfo?.email || "Not available"}</p>
                 </div>
               </div>
 
-              <Button variant="ghost" size="icon" asChild>
-                <Link href="/">
+              <Button variant="ghost" size="icon" onClick={() => void handleLogout()} aria-label="Logout">
                   <LogOut className="size-4" />
-                </Link>
               </Button>
             </div>
           </div>

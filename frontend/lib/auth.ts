@@ -19,6 +19,7 @@ export interface StoredUser {
 // ── Session keys (user info only, NOT tokens) ──────────────────────────────
 const USER_INFO_KEY = 'bmf_user_info'
 const ADMIN_INFO_KEY = 'bmf_admin_info'
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
 
 function secureCookieSuffix(): string {
   if (typeof window === 'undefined') return ''
@@ -48,16 +49,30 @@ export function clearAdminMiddlewareCookie(): void {
   document.cookie = `bmf_admin_token=; path=/; max-age=0; SameSite=Lax${secureCookieSuffix()}`
 }
 
+export function clearUserSession(): void {
+  if (typeof window === 'undefined') return
+  sessionStorage.removeItem(USER_INFO_KEY)
+  clearUserMiddlewareCookie()
+}
+
+export function clearAdminSession(): void {
+  if (typeof window === 'undefined') return
+  sessionStorage.removeItem(ADMIN_INFO_KEY)
+  clearAdminMiddlewareCookie()
+}
+
 // ── Save user info after login ─────────────────────────────────────────────
 // Called after successful login. Flask already set the httpOnly cookie.
 // We only store non-sensitive info in sessionStorage for UI purposes.
 export function saveUserSession(user: StoredUser): void {
   if (typeof window === 'undefined') return
+  clearAdminSession()
   sessionStorage.setItem(USER_INFO_KEY, JSON.stringify(user))
 }
 
 export function saveAdminSession(admin: StoredUser): void {
   if (typeof window === 'undefined') return
+  clearUserSession()
   sessionStorage.setItem(ADMIN_INFO_KEY, JSON.stringify(admin))
 }
 
@@ -101,11 +116,11 @@ export function hasAdminSession(): boolean {
 // Then clear our sessionStorage user info.
 export async function logout(): Promise<void> {
   if (typeof window === 'undefined') return
-  sessionStorage.removeItem(USER_INFO_KEY)
-  clearUserMiddlewareCookie()
+  clearUserSession()
+  clearAdminSession()
   try {
     await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/api/auth/logout`,
+      `${BASE_URL}/api/auth/logout`,
       { method: 'POST', credentials: 'include' }
     )
   } catch {
@@ -116,11 +131,11 @@ export async function logout(): Promise<void> {
 
 export async function logoutAdmin(): Promise<void> {
   if (typeof window === 'undefined') return
-  sessionStorage.removeItem(ADMIN_INFO_KEY)
-  clearAdminMiddlewareCookie()
+  clearUserSession()
+  clearAdminSession()
   try {
     await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/api/admin/logout`,
+      `${BASE_URL}/api/admin/logout`,
       { method: 'POST', credentials: 'include' }
     )
   } catch {}

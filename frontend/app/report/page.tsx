@@ -100,6 +100,11 @@ export default function ReportPage() {
       alert("File size must be less than 5MB");
       return;
     }
+    setAnalysis(null);
+    setLocationCaptured(false);
+    setLatitude(null);
+    setLongitude(null);
+    setAdditionalDetails("");
     setImageFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -109,7 +114,7 @@ export default function ReportPage() {
   };
 
   const handleAnalyze = async () => {
-    if (!imageFile) return;
+    if (!imageFile || isAnalyzing || analysis) return;
 
     setIsAnalyzing(true);
     try {
@@ -345,6 +350,11 @@ Track status at: https://brihanmumbai.fix/track/${complaintId}`;
                         onClick={() => {
                           setImageFile(null);
                           setImagePreview(null);
+                          setAnalysis(null);
+                          setLocationCaptured(false);
+                          setLatitude(null);
+                          setLongitude(null);
+                          setAdditionalDetails("");
                         }}
                         className="absolute top-2 right-2 p-2 bg-background/80 backdrop-blur rounded-full hover:bg-background transition-colors"
                         aria-label="Remove image"
@@ -363,7 +373,7 @@ Track status at: https://brihanmumbai.fix/track/${complaintId}`;
                 <div className="flex justify-end">
                   <Button
                     onClick={handleAnalyze}
-                    disabled={!imageFile || isAnalyzing}
+                    disabled={!imageFile || isAnalyzing || analysis !== null}
                     className="gap-2"
                   >
                     {isAnalyzing ? (

@@ -9,6 +9,7 @@ const JWT_SECRET = new TextEncoder().encode(
 )
 
 async function verifyJWT(token: string): Promise<{ user_id: string; role: string } | null> {
+  if (!token || token.length > 2048) return null
   try {
     const { payload } = await jwtVerify(token, JWT_SECRET, {
       algorithms: ['HS256'],
@@ -23,7 +24,21 @@ async function verifyJWT(token: string): Promise<{ user_id: string; role: string
   }
 }
 
-export async function middleware(request: NextRequest) {
+function sanitizeRedirectPath(rawRedirect: string | null): string {
+  if (rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')) {
+    return rawRedirect
+  }
+  return '/dashboard'
+}
+
+function createUserLoginRedirect(request: NextRequest): URL {
+  const loginUrl = new URL('/login', request.url)
+  const originalPath = `${request.nextUrl.pathname}${request.nextUrl.search}`
+  loginUrl.searchParams.set('redirect', originalPath)
+  return loginUrl
+}
+
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // ── Admin routes ─────────────────────────────────────────────────
@@ -50,13 +65,11 @@ export async function middleware(request: NextRequest) {
   if (isProtected) {
     const userToken = request.cookies.get('bmf_token')?.value
     if (!userToken) {
-      const loginUrl = new URL('/login', request.url)
-      loginUrl.searchParams.set('redirect', pathname)
-      return NextResponse.redirect(loginUrl)
+      return NextResponse.redirect(createUserLoginRedirect(request))
     }
     const payload = await verifyJWT(userToken)
     if (!payload || payload.role !== 'user') {
-      const response = NextResponse.redirect(new URL('/login', request.url))
+      const response = NextResponse.redirect(createUserLoginRedirect(request))
       response.cookies.delete('bmf_token')
       return response
     }
@@ -66,11 +79,14 @@ export async function middleware(request: NextRequest) {
   // ── Redirect logged-in users away from auth pages ─────────────────
   const authOnlyPaths = ['/login', '/register']
   if (authOnlyPaths.includes(pathname)) {
+    const redirectTarget = sanitizeRedirectPath(
+      request.nextUrl.searchParams.get('redirect')
+    )
     const userToken = request.cookies.get('bmf_token')?.value
     if (userToken) {
       const payload = await verifyJWT(userToken)
       if (payload?.role === 'user') {
-        return NextResponse.redirect(new URL('/dashboard', request.url))
+        return NextResponse.redirect(new URL(redirectTarget, request.url))
       }
     }
     const adminToken = request.cookies.get('bmf_admin_token')?.value
@@ -79,6 +95,20 @@ export async function middleware(request: NextRequest) {
       if (payload?.role === 'admin') {
         return NextResponse.redirect(new URL('/admin', request.url))
       }
+    }
+  }
+
+  // ── Redirect logged-in admins away from admin login ───────────────
+  if (pathname === '/admin/login') {
+    const adminToken = request.cookies.get('bmf_admin_token')?.value
+    if (adminToken) {
+      const payload = await verifyJWT(adminToken)
+      if (payload?.role === 'admin') {
+        return NextResponse.redirect(new URL('/admin', request.url))
+      }
+      const response = NextResponse.next()
+      response.cookies.delete('bmf_admin_token')
+      return response
     }
   }
 

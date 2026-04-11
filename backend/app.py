@@ -9,6 +9,7 @@ Handles: User auth, image upload, AI classification, complaint generation, Mongo
 import os
 import json
 import time
+import ipaddress
 from datetime import datetime, timedelta
 from functools import wraps
 from collections import defaultdict
@@ -142,6 +143,9 @@ def add_security_headers(response):
 # Thread-safe in-memory rate limiter
 _rate_limit_store = defaultdict(list)
 _rate_limit_lock = threading.Lock()
+TRUSTED_PROXY_IPS = {
+    ip.strip() for ip in os.getenv('TRUSTED_PROXY_IPS', '').split(',') if ip.strip()
+}
 
 def rate_limit(max_requests: int, window_seconds: int):
     """
@@ -151,9 +155,48 @@ def rate_limit(max_requests: int, window_seconds: int):
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-            if ip and ',' in ip:
-                ip = ip.split(',')[0].strip()
+            def _normalize_ip(ip_value):
+                if not ip_value:
+                    return ''
+                candidate = str(ip_value).strip()
+                if not candidate or len(candidate) > 64:
+                    return ''
+
+                # Handle common host:port forms
+                if candidate.count(':') == 1 and '.' in candidate:
+                    host, port = candidate.rsplit(':', 1)
+                    if port.isdigit():
+                        candidate = host
+                if candidate.startswith('[') and ']:' in candidate:
+                    candidate = candidate[1:candidate.index(']:')]
+                elif candidate.startswith('[') and candidate.endswith(']'):
+                    candidate = candidate[1:-1]
+
+                try:
+                    ipaddress.ip_address(candidate)
+                    return candidate
+                except ValueError:
+                    return ''
+
+            remote_ip = _normalize_ip(request.remote_addr) or '0.0.0.0'
+            trust_x_forwarded_for = False
+            try:
+                remote_ip_obj = ipaddress.ip_address(remote_ip)
+                trust_x_forwarded_for = (
+                    remote_ip in TRUSTED_PROXY_IPS
+                    or remote_ip_obj.is_loopback
+                    or remote_ip_obj.is_private
+                )
+            except ValueError:
+                trust_x_forwarded_for = remote_ip in TRUSTED_PROXY_IPS
+
+            ip = remote_ip
+            if trust_x_forwarded_for:
+                xff = request.headers.get('X-Forwarded-For', '')
+                if xff:
+                    forwarded_ip = _normalize_ip(xff.split(',')[0])
+                    if forwarded_ip:
+                        ip = forwarded_ip
             
             key = f"{f.__name__}:{ip}"
             now = time.time()
@@ -702,7 +745,8 @@ def register():
         return response
         
     except Exception as e:
-        return error(f'Registration failed: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/auth/login', methods=['POST'])
@@ -759,7 +803,8 @@ def login():
         return response
         
     except Exception as e:
-        return error(f'Login failed: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/auth/me', methods=['GET'])
@@ -777,7 +822,8 @@ def get_current_user():
             'created_at': user['created_at'].isoformat()
         }, 200)
     except Exception as e:
-        return error(f'Failed to fetch user: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -864,7 +910,8 @@ def admin_login():
         return response
         
     except Exception as e:
-        return error(f'Admin login failed: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/admin/me', methods=['GET'])
@@ -895,7 +942,8 @@ def get_current_admin():
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch admin: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/admin/logout', methods=['POST'])
@@ -1000,7 +1048,8 @@ def admin_get_complaints():
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch complaints: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/admin/complaints/<complaint_id>', methods=['GET'])
@@ -1045,7 +1094,8 @@ def admin_get_complaint(complaint_id):
         return success(complaint_dict, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch complaint: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/admin/complaints/<complaint_id>/status', methods=['PATCH'])
@@ -1087,7 +1137,8 @@ def admin_update_complaint_status(complaint_id):
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to update complaint status: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/admin/stats', methods=['GET'])
@@ -1142,7 +1193,8 @@ def admin_get_stats():
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch statistics: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 # ============================================================================
@@ -1289,21 +1341,7 @@ def analyze_image():
     """Analyze civic issue image using Gemini AI with fallback chain"""
     try:
         # Authenticate user
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return error('Authorization header is missing', 401)
-        
-        try:
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return error('Token has expired', 401)
-        except jwt.InvalidTokenError:
-            return error('Invalid token', 401)
-        except IndexError:
-            return error('Invalid authorization header format', 401)
+        user_id = verify_token(request)
         
         # Validate file with security checks
         file = request.files.get('image')
@@ -1319,7 +1357,8 @@ def analyze_image():
             )
             image_url = upload_result['secure_url']
         except Exception as e:
-            return error(f'Image upload failed: {str(e)}', 500)
+            print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+            return error('An internal error occurred. Please try again.', 500)
         
         # Analyze image with fallback chain
         try:
@@ -1351,7 +1390,8 @@ def analyze_image():
             }, 200)
         
     except Exception as e:
-        return error(f'Image analysis failed: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 # ============================================================================
@@ -1364,21 +1404,7 @@ def create_complaint():
     """Create a new complaint with Groq-generated formal text"""
     try:
         # Authenticate user
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return error('Authorization header is missing', 401)
-        
-        try:
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return error('Token has expired', 401)
-        except jwt.InvalidTokenError:
-            return error('Invalid token', 401)
-        except IndexError:
-            return error('Invalid authorization header format', 401)
+        user_id = verify_token(request)
         
         # Get request data safely
         data = get_safe_body()
@@ -1485,7 +1511,8 @@ A Concerned Citizen of Mumbai"""
         return success(complaint_doc, 201)
         
     except Exception as e:
-        return error(f'Failed to create complaint: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/complaints', methods=['GET'])
@@ -1493,21 +1520,7 @@ def get_complaints():
     """Get all complaints for authenticated user with pagination"""
     try:
         # Authenticate user
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return error('Authorization header is missing', 401)
-        
-        try:
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return error('Token has expired', 401)
-        except jwt.InvalidTokenError:
-            return error('Invalid token', 401)
-        except IndexError:
-            return error('Invalid authorization header format', 401)
+        user_id = verify_token(request)
         
         # Get pagination parameters
         page = int(request.args.get('page', 1))
@@ -1539,7 +1552,8 @@ def get_complaints():
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch complaints: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/complaints/<complaint_id>', methods=['GET'])
@@ -1547,21 +1561,7 @@ def get_complaint(complaint_id):
     """Get single complaint by ID (only if user owns it)"""
     try:
         # Authenticate user
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return error('Authorization header is missing', 401)
-        
-        try:
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return error('Token has expired', 401)
-        except jwt.InvalidTokenError:
-            return error('Invalid token', 401)
-        except IndexError:
-            return error('Invalid authorization header format', 401)
+        user_id = verify_token(request)
         
         # Find complaint by ID and user_id (security check)
         complaint = complaints_collection.find_one({
@@ -1581,7 +1581,8 @@ def get_complaint(complaint_id):
         return success(complaint, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch complaint: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/complaints/<complaint_id>/status', methods=['PATCH'])
@@ -1589,21 +1590,7 @@ def update_complaint_status(complaint_id):
     """Update complaint status"""
     try:
         # Authenticate user
-        auth_header = request.headers.get('Authorization')
-        
-        if not auth_header:
-            return error('Authorization header is missing', 401)
-        
-        try:
-            token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = payload['user_id']
-        except jwt.ExpiredSignatureError:
-            return error('Token has expired', 401)
-        except jwt.InvalidTokenError:
-            return error('Invalid token', 401)
-        except IndexError:
-            return error('Invalid authorization header format', 401)
+        user_id = verify_token(request)
         
         # Get new status
         data = request.get_json()
@@ -1645,7 +1632,8 @@ def update_complaint_status(complaint_id):
         return success(complaint, 200)
         
     except Exception as e:
-        return error(f'Failed to update complaint: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 # ============================================================================
@@ -1683,7 +1671,8 @@ def get_feed_preview():
                 continue
         return success({'posts': posts, 'total': len(posts)}, 200)
     except Exception as e:
-        return error(f'Failed to fetch preview: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 @app.route('/api/feed', methods=['GET'])
@@ -1757,7 +1746,8 @@ def get_community_feed():
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch community feed: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 # ============================================================================
@@ -1791,7 +1781,8 @@ def get_ward_info():
         }, 200)
         
     except Exception as e:
-        return error(f'Failed to fetch ward info: {str(e)}', 500)
+        print(f'[ERROR] {request.path}: {type(e).__name__}: {e}')
+        return error('An internal error occurred. Please try again.', 500)
 
 
 # ============================================================================

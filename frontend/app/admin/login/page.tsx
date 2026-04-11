@@ -36,7 +36,8 @@ export default function AdminLoginPage() {
     setIsLoading(true);
     try {
       await adminAPI.login(email, password);
-      router.push("/admin");
+      router.replace("/admin");
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Admin login failed");
     } finally {

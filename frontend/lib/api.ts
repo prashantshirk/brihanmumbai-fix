@@ -3,8 +3,8 @@ import {
   saveAdminSession,
   setUserMiddlewareCookie,
   setAdminMiddlewareCookie,
-  clearUserMiddlewareCookie,
-  clearAdminMiddlewareCookie,
+  clearUserSession,
+  clearAdminSession,
 } from '@/lib/auth'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
@@ -127,8 +127,7 @@ async function apiFetch<T>(
     }
 
     if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('bmf_user_info')
-      clearUserMiddlewareCookie()
+      clearUserSession()
       window.location.href = '/login'
     }
     throw new Error(message)
@@ -138,8 +137,7 @@ async function apiFetch<T>(
     const err = await res.json().catch(() => ({ error: 'Forbidden' }))
     const message = err.error || 'Forbidden'
     if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('bmf_admin_info')
-      clearAdminMiddlewareCookie()
+      clearAdminSession()
       window.location.href = '/admin/login'
     }
     throw new Error(message)
