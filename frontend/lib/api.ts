@@ -127,8 +127,13 @@ async function apiFetch<T>(
     }
 
     if (typeof window !== 'undefined') {
-      clearUserSession()
-      window.location.href = '/login'
+      if (isAdminPath) {
+        clearAdminSession()
+        window.location.href = '/admin/login'
+      } else {
+        clearUserSession()
+        window.location.href = '/login'
+      }
     }
     throw new Error(message)
   }

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Montserrat, Merriweather, Source_Code_Pro } from "next/font/google";
 import "./globals.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://brihanmumbai-fix.vercel.app";
@@ -38,10 +37,6 @@ export const metadata: Metadata = {
     images: ["/images/og-preview.png?v=1"],
   },
 };
-
-const _montserrat = Montserrat({ subsets: ["latin"] });
-const _merriweather = Merriweather({ subsets: ["latin"] });
-const _sourceCodePro = Source_Code_Pro({ subsets: ["latin"] });
 
 export default function RootLayout({
   children,

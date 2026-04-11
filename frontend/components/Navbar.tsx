@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { hasUserSession, getUser, logout } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Menu, X, MapPin, LogOut, LayoutDashboard, FileText, Users } from 'lucide-react'
@@ -12,7 +12,6 @@ export default function Navbar() {
   const [userName, setUserName] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
   const pathname = usePathname()
-  const router = useRouter()
 
   useEffect(() => {
     setMounted(true)

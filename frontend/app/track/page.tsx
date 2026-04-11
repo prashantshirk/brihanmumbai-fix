@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Header } from "@/components/landing/header";
 import { Footer } from "@/components/landing/footer";
@@ -10,15 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { complaintAPI } from "@/lib/api";
 import {
   Search,
   Loader2,
   MapPin,
   Calendar,
   Building2,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
   FileText,
 } from "lucide-react";
 
@@ -32,69 +30,70 @@ interface ComplaintData {
   department: string;
   submittedAt: string;
   description: string;
-  timeline: {
-    status: string;
-    date: string;
-    note: string;
-  }[];
+  additional_details?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  image_url?: string;
 }
-
-// Mock complaint data
-const mockComplaint: ComplaintData = {
-  id: "BMF-K7X2A9-P4QM",
-  issueType: "Pothole",
-  severity: "High",
-  location: "Link Road, near Andheri Station",
-  ward: "K/W-Ward",
-  status: "In Progress",
-  department: "Roads & Infrastructure",
-  submittedAt: "2024-01-15T10:30:00Z",
-  description: "Large pothole causing traffic disruption and potential safety hazard for vehicles.",
-  timeline: [
-    {
-      status: "Submitted",
-      date: "2024-01-15T10:30:00Z",
-      note: "Complaint registered successfully",
-    },
-    {
-      status: "Under Review",
-      date: "2024-01-15T14:45:00Z",
-      note: "Assigned to Roads department for review",
-    },
-    {
-      status: "In Progress",
-      date: "2024-01-16T09:15:00Z",
-      note: "Repair work scheduled. Team dispatched to location.",
-    },
-  ],
-};
 
 export default function TrackPage() {
   const [complaintId, setComplaintId] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [complaint, setComplaint] = useState<ComplaintData | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const hasAutoSearched = useRef(false);
+
+  const searchComplaint = useCallback(async (rawId: string) => {
+    const id = rawId.trim();
+    if (!id) return;
+    setIsSearching(true);
+    setNotFound(false);
+    setErrorMessage("");
+    setComplaint(null);
+
+    try {
+      const data = await complaintAPI.getOne(id);
+      const mapped: ComplaintData = {
+        id: data.id || data._id || id,
+        issueType: data.issue_type || "Unknown issue",
+        severity: data.severity || "Low",
+        location: data.location || "N/A",
+        ward: data.ward_number || "N/A",
+        status: data.status || "Submitted",
+        department: data.department || "General",
+        submittedAt: data.created_at || "",
+        description: data.description || "",
+        additional_details: data.additional_details,
+        latitude: data.latitude ?? null,
+        longitude: data.longitude ?? null,
+        image_url: data.image_url,
+      };
+      setComplaint(mapped);
+    } catch (err) {
+      setNotFound(true);
+      setErrorMessage(
+        err instanceof Error ? err.message : "Could not fetch complaint details. Please try again."
+      );
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!complaintId.trim()) return;
-
-    setIsSearching(true);
-    setNotFound(false);
-    setComplaint(null);
-
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mock response - find complaint if ID matches
-    if (complaintId.toUpperCase().includes("BMF")) {
-      setComplaint(mockComplaint);
-    } else {
-      setNotFound(true);
-    }
-
-    setIsSearching(false);
+    await searchComplaint(complaintId);
   };
+
+  useEffect(() => {
+    if (hasAutoSearched.current || typeof window === "undefined") return;
+    hasAutoSearched.current = true;
+    const id = new URLSearchParams(window.location.search).get("id")?.trim();
+    if (!id) return;
+    setComplaintId(id);
+    void searchComplaint(id);
+  }, [searchComplaint]);
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
@@ -120,18 +119,8 @@ export default function TrackPage() {
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "Resolved":
-        return <CheckCircle2 className="size-5 text-green-500" />;
-      case "In Progress":
-        return <Clock className="size-5 text-yellow-500" />;
-      default:
-        return <AlertCircle className="size-5 text-blue-500" />;
-    }
-  };
-
   const formatDate = (dateString: string) => {
+    if (!dateString) return "N/A";
     return new Date(dateString).toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
@@ -163,12 +152,12 @@ export default function TrackPage() {
                   <Label htmlFor="complaintId" className="sr-only">
                     Complaint ID
                   </Label>
-                  <Input
-                    id="complaintId"
-                    placeholder="Enter complaint ID (e.g., BMF-K7X2A9-P4QM)"
-                    value={complaintId}
-                    onChange={(e) => setComplaintId(e.target.value)}
-                    className="font-mono"
+                   <Input
+                     id="complaintId"
+                     placeholder="Enter complaint ID from your dashboard"
+                     value={complaintId}
+                     onChange={(e) => setComplaintId(e.target.value)}
+                     className="font-mono"
                   />
                 </div>
                 <Button type="submit" disabled={isSearching || !complaintId.trim()}>
@@ -191,7 +180,9 @@ export default function TrackPage() {
                 </div>
                 <h3 className="font-semibold mb-2">Complaint Not Found</h3>
                 <p className="text-sm text-muted-foreground mb-6">
-                  We couldn&apos;t find a complaint with ID &quot;{complaintId}&quot;. Please check the ID and try again.
+                  {errorMessage
+                    ? errorMessage
+                    : `We couldn't find a complaint with ID "${complaintId}". Please check the ID and try again.`}
                 </p>
                 <Button variant="outline" asChild>
                   <Link href="/report">Report a New Issue</Link>
@@ -263,44 +254,20 @@ export default function TrackPage() {
                     <p className="text-sm text-muted-foreground mb-2">Description</p>
                     <p className="text-sm bg-muted p-3 rounded-lg">{complaint.description}</p>
                   </div>
-                </CardContent>
-              </Card>
-
-              {/* Timeline Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Status Timeline</CardTitle>
-                  <CardDescription>
-                    Track the progress of your complaint
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="relative">
-                    {complaint.timeline.map((item, index) => (
-                      <div key={index} className="flex gap-4 pb-8 last:pb-0">
-                        {/* Timeline Line */}
-                        <div className="flex flex-col items-center">
-                          <div className="size-10 rounded-full bg-secondary flex items-center justify-center">
-                            {getStatusIcon(item.status)}
-                          </div>
-                          {index < complaint.timeline.length - 1 && (
-                            <div className="w-0.5 flex-1 bg-border mt-2" />
-                          )}
-                        </div>
-
-                        {/* Content */}
-                        <div className="flex-1 pt-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="font-medium">{item.status}</p>
-                          </div>
-                          <p className="text-sm text-muted-foreground mb-1">
-                            {formatDate(item.date)}
-                          </p>
-                          <p className="text-sm">{item.note}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {complaint.additional_details && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-2">Additional Details</p>
+                      <p className="text-sm bg-muted p-3 rounded-lg">{complaint.additional_details}</p>
+                    </div>
+                  )}
+                  {complaint.latitude != null && complaint.longitude != null && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-2">Coordinates</p>
+                      <p className="text-sm bg-muted p-3 rounded-lg">
+                        {complaint.latitude}, {complaint.longitude}
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

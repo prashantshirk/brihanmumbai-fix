@@ -3,21 +3,23 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { hasUserSession, logout } from "@/lib/auth";
+import { getUser, hasUserSession, logout } from "@/lib/auth";
 import { LogOut, Menu, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export function Header() {
+  const [mounted, setMounted] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
-  const hasUserCookie =
-    typeof document !== "undefined" &&
-    document.cookie
-      .split(";")
-      .map((part) => part.trim())
-      .some((part) => part.startsWith("bmf_token="));
-  const isLoggedIn = hasUserSession() || hasUserCookie;
+
+  useEffect(() => {
+    setMounted(true);
+    const user = getUser();
+    setIsLoggedIn(hasUserSession() && Boolean(user?.id));
+  }, [pathname]);
+
   const isDashboardView = pathname.startsWith("/dashboard");
   const isCommunityView = pathname.startsWith("/feed");
 
@@ -29,6 +31,8 @@ export function Header() {
   async function handleLogout() {
     await logout();
   }
+
+  if (!mounted) return null;
 
   return (
     <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
