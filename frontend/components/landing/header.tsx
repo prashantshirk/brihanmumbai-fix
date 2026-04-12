@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { getUser, hasUserSession, logout } from "@/lib/auth";
+import { getUser, hasUserSession, logout, saveUserSession } from "@/lib/auth";
 import { LogOut, Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -15,9 +15,53 @@ export function Header() {
   const pathname = usePathname();
 
   useEffect(() => {
+    let cancelled = false;
+
+    function getCookie(name: string): string | null {
+      const prefix = `${name}=`;
+      const found = document.cookie
+        .split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(prefix));
+      return found ? decodeURIComponent(found.slice(prefix.length)) : null;
+    }
+
+    async function syncAuthState() {
+      const user = getUser();
+      if (hasUserSession() && user?.id) {
+        if (!cancelled) setIsLoggedIn(true);
+        return;
+      }
+
+      const token = getCookie("bmf_token");
+      if (!token) {
+        if (!cancelled) setIsLoggedIn(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"}/api/auth/me`, {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          if (!cancelled) setIsLoggedIn(false);
+          return;
+        }
+        const hydratedUser = await res.json();
+        saveUserSession(hydratedUser);
+        if (!cancelled) setIsLoggedIn(Boolean(hydratedUser?.id));
+      } catch {
+        if (!cancelled) setIsLoggedIn(false);
+      }
+    }
+
     setMounted(true);
-    const user = getUser();
-    setIsLoggedIn(hasUserSession() && Boolean(user?.id));
+    syncAuthState();
+
+    return () => {
+      cancelled = true;
+    };
   }, [pathname]);
 
   const isDashboardView = pathname.startsWith("/dashboard");
