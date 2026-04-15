@@ -29,6 +29,7 @@ from bson.errors import InvalidId
 import cloudinary
 import cloudinary.uploader
 from groq import Groq
+import requests
 
 # ============================================================================
 # LOAD ENVIRONMENT VARIABLES
@@ -1258,8 +1259,18 @@ Return only the JSON. No markdown, no explanation. If not a civic issue, set iss
         raise json.JSONDecodeError('No JSON object found in model response', text, 0)
 
     # ── Try Gemini models ──────────────────────────────────────
-    import urllib.request, io
-    import PIL.Image
+    import urllib.request, base64
+
+    def build_gemini_url(model_id: str, api_key: str) -> str:
+        return (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model_id}:generateContent?key={api_key}"
+        )
+
+    def guess_mime_type(url: str) -> str:
+        ext = url.split('.')[-1].lower().split('?')[0]
+        media_type_map = {'jpg': 'jpeg', 'jpeg': 'jpeg', 'png': 'png', 'webp': 'webp'}
+        return f"image/{media_type_map.get(ext, 'jpeg')}"
 
     for config in GEMINI_CONFIGS:
         if not config['api_key']:
@@ -1268,29 +1279,55 @@ Return only the JSON. No markdown, no explanation. If not a civic issue, set iss
         print(f"[AI] Attempting Gemini model: {config['label']}")
         response = None
         try:
-            genai.configure(api_key=config['api_key'])
-            model = genai.GenerativeModel(config['model'])
-
             with urllib.request.urlopen(image_url, timeout=10) as resp:
-                image = PIL.Image.open(io.BytesIO(resp.read()))
+                image_bytes = resp.read()
             print(f"[AI] Cloudinary image download succeeded for {config['label']}")
 
-            response = model.generate_content(
-                [VISION_PROMPT, image],
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=512
-                )
-            )
+            payload = {
+                'contents': [{
+                    'parts': [
+                        {'text': VISION_PROMPT},
+                        {
+                            'inline_data': {
+                                'mime_type': guess_mime_type(image_url),
+                                'data': base64.b64encode(image_bytes).decode('utf-8')
+                            }
+                        }
+                    ]
+                }],
+                'generationConfig': {
+                    'temperature': 0.1,
+                    'maxOutputTokens': 512
+                }
+            }
 
-            result = parse_json_response(response.text)
+            response = requests.post(
+                build_gemini_url(config['model'], config['api_key']),
+                json=payload,
+                timeout=(5, 20)
+            )
+            if response.status_code != 200:
+                print(
+                    f"[AI Fallback] {config['label']} HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+                continue
+
+            data = response.json()
+            raw_text = (
+                data.get('candidates', [{}])[0]
+                .get('content', {})
+                .get('parts', [{}])[0]
+                .get('text', '')
+            )
+            result = parse_json_response(raw_text)
             result['model_used'] = config['label']
             print(f"[AI] Success with {config['label']}")
             print(f"[AI] Final model_used: {result['model_used']}")
             return result
 
         except json.JSONDecodeError as e:
-            raw_text = response.text if response is not None and getattr(response, 'text', None) else ''
+            raw_text = response.text if response is not None else ''
             print(f"[AI Fallback] {config['label']} JSON decode failed: {type(e).__name__}: {e}")
             if raw_text:
                 print(f"[AI Fallback] {config['label']} raw response: {raw_text}")
