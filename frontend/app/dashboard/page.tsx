@@ -60,6 +60,7 @@ interface Complaint {
 
 export default function DashboardPage() {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -67,8 +68,13 @@ export default function DashboardPage() {
   const itemsPerPage = 10;
 
   useEffect(() => {
+    // Fetch up to 100 complaints. The backend-provided `data.total` is used for
+    // the overall count so the "Total" card is always accurate regardless of
+    // how many complaints the user has. Per-status counts are derived from the
+    // fetched page and are accurate for users with up to 100 complaints, which
+    // covers the typical use case for a personal civic complaint dashboard.
     complaintAPI
-      .list(1, 10)
+      .list(1, 100)
       .then((data) => {
         const mapped = (data.complaints || []).map((complaint: ApiComplaint) => ({
           id: complaint.id || complaint._id || "",
@@ -89,6 +95,8 @@ export default function DashboardPage() {
           longitude: complaint.longitude,
         }));
         setComplaints(mapped);
+        // Always use the backend-provided total for the stat card.
+        setTotalCount(typeof data.total === "number" ? data.total : mapped.length);
         setIsLoading(false);
       })
       .catch((err) => {
@@ -100,7 +108,7 @@ export default function DashboardPage() {
   const complaint = selectedComplaint;
 
   const stats = {
-    total: complaints.length,
+    total: totalCount,
     submitted: complaints.filter((c) => c.status === "Submitted").length,
     inProgress: complaints.filter((c) => c.status === "In Progress").length,
     resolved: complaints.filter((c) => c.status === "Resolved").length,
